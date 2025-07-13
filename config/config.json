@@ -1,0 +1,46 @@
+{
+  "local": {
+    "minIosVersion": "1.0.0",
+    "minAndroidVersion": "1.0.0",
+    "minWebVersion": "1.0.0",
+    "auth0Domain": "dev-3jngnvbb08dw5nhq.us.auth0.com",
+    "auth0IssuerBaseUrl": "https://dev-3jngnvbb08dw5nhq.us.auth0.com",
+    "apiAudience": "https://api.acme.com",
+    "auth0ClientId": "vGxKHocnGDiFKqO4kbnltEO0ZP7fawWc",
+    "auth0ManagementClientId": "wlS3FYAE8zazah5a3QoL4UIutYgrz3cG",
+    "auth0ManagementAudience": "https://dev-3jngnvbb08dw5nhq.us.auth0.com/api/v2/"
+  },
+  "development": {
+    "minIosVersion": "1.0.0",
+    "minAndroidVersion": "1.0.0",
+    "minWebVersion": "1.0.0",
+    "auth0Domain": "dev-3jngnvbb08dw5nhq.us.auth0.com",
+    "auth0IssuerBaseUrl": "https://dev-3jngnvbb08dw5nhq.us.auth0.com",
+    "apiAudience": "https://api.acme.com",
+    "auth0ClientId": "vGxKHocnGDiFKqO4kbnltEO0ZP7fawWc",
+    "auth0ManagementClientId": "wlS3FYAE8zazah5a3QoL4UIutYgrz3cG",
+    "auth0ManagementAudience": "https://dev-3jngnvbb08dw5nhq.us.auth0.com/api/v2/"
+  },
+  "test": {
+    "minIosVersion": "1.0.0",
+    "minAndroidVersion": "1.0.0",
+    "minWebVersion": "1.0.0",
+    "auth0Domain": "dev-3jngnvbb08dw5nhq.us.auth0.com",
+    "auth0IssuerBaseUrl": "https://dev-3jngnvbb08dw5nhq.us.auth0.com",
+    "apiAudience": "https://api.acme.com",
+    "auth0ClientId": "vGxKHocnGDiFKqO4kbnltEO0ZP7fawWc",
+    "auth0ManagementClientId": "wlS3FYAE8zazah5a3QoL4UIutYgrz3cG",
+    "auth0ManagementAudience": "https://dev-3jngnvbb08dw5nhq.us.auth0.com/api/v2/"
+  },
+  "production": {
+    "minIosVersion": "1.0.0",
+    "minAndroidVersion": "1.0.0",
+    "minWebVersion": "1.0.0",
+    "auth0Domain": "dev-3jngnvbb08dw5nhq.us.auth0.com",
+    "auth0IssuerBaseUrl": "https://dev-3jngnvbb08dw5nhq.us.auth0.com",
+    "apiAudience": "https://api.acme.com",
+    "auth0ClientId": "vGxKHocnGDiFKqO4kbnltEO0ZP7fawWc",
+    "auth0ManagementClientId": "wlS3FYAE8zazah5a3QoL4UIutYgrz3cG",
+    "auth0ManagementAudience": "https://dev-3jngnvbb08dw5nhq.us.auth0.com/api/v2/"
+  }
+}

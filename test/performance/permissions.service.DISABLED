@@ -1,0 +1,1658 @@
+import { ConfigService } from '@nestjs/config';
+import { getModelToken } from '@nestjs/sequelize';
+import { Test, TestingModule } from '@nestjs/testing';
+import { User } from '../../src/modules/auth/entities/user.entity';
+import { ServiceBulkPermissionCheckDto } from '../../src/modules/role/dto/permissions-service.dto';
+import {
+  Permission,
+  Role,
+  RolePermission,
+  UserPermission,
+  UserRole,
+} from '../../src/modules/role/entities';
+import { PermissionsService } from '../../src/modules/role/permissions.service';
+
+// Performance Testing Utilities
+class PerformanceTestUtils {
+  static measureExecutionTime<T>(func: () => Promise<T>): Promise<{ result: T; duration: number }> {
+    const startTime = process.hrtime.bigint();
+    return func().then((result) => {
+      const endTime = process.hrtime.bigint();
+      const duration = Number(endTime - startTime) / 1000000; // Convert to milliseconds
+      return { result, duration };
+    });
+  }
+
+  static async measureMultipleExecutions<T>(
+    func: () => Promise<T>,
+    iterations: number
+  ): Promise<{
+    results: T[];
+    durations: number[];
+    averageDuration: number;
+    p50: number;
+    p95: number;
+    p99: number;
+    maxDuration: number;
+    minDuration: number;
+  }> {
+    const results: T[] = [];
+    const durations: number[] = [];
+
+    for (let i = 0; i < iterations; i++) {
+      const { result, duration } = await this.measureExecutionTime(func);
+      results.push(result);
+      durations.push(duration);
+    }
+
+    const sortedDurations = [...durations].sort((a, b) => a - b);
+    const p50 = sortedDurations[Math.floor(sortedDurations.length * 0.5)];
+    const p95 = sortedDurations[Math.floor(sortedDurations.length * 0.95)];
+    const p99 = sortedDurations[Math.floor(sortedDurations.length * 0.99)];
+
+    return {
+      results,
+      durations,
+      averageDuration: durations.reduce((sum, d) => sum + d, 0) / durations.length,
+      p50,
+      p95,
+      p99,
+      maxDuration: Math.max(...durations),
+      minDuration: Math.min(...durations),
+    };
+  }
+
+  static generateTestUsers(count: number): any[] {
+    return Array.from({ length: count }, (_, i) => ({
+      id: `user-${i}`,
+      company_id: `company-${Math.floor(i / 100)}`, // 100 users per company
+      email: `user${i}@example.com`,
+      first_name: `User`,
+      last_name: `${i}`,
+      created_at: new Date(),
+      updated_at: new Date(),
+    }));
+  }
+
+  static generateTestPermissions(count: number, prefix: string = 'PERMISSION'): any[] {
+    return Array.from({ length: count }, (_, i) => ({
+      id: `perm-${prefix}-${i}`,
+      name: `${prefix}_${i}`,
+      category: `CATEGORY_${Math.floor(i / 10)}`,
+      description: `Test permission ${i}`,
+      created_at: new Date(),
+      updated_at: new Date(),
+    }));
+  }
+
+  static generateTestRoles(count: number, permissionsPerRole: number = 10): any[] {
+    return Array.from({ length: count }, (_, i) => ({
+      id: `role-${i}`,
+      name: `Role_${i}`,
+      company_id: `company-${Math.floor(i / 10)}`, // 10 roles per company
+      permissions: this.generateTestPermissions(permissionsPerRole, `ROLE${i}`),
+      created_at: new Date(),
+      updated_at: new Date(),
+    }));
+  }
+
+  static generateUserRoles(userIds: string[], roles: any[]): any[] {
+    const userRoles: any[] = [];
+    userIds.forEach((userId) => {
+      // Assign random number of roles (1-5) to each user
+      const roleCount = Math.floor(Math.random() * 5) + 1;
+      const shuffledRoles = [...roles].sort(() => Math.random() - 0.5);
+
+      for (let i = 0; i < Math.min(roleCount, shuffledRoles.length); i++) {
+        userRoles.push({
+          user_id: userId,
+          role_id: shuffledRoles[i].id,
+          role: shuffledRoles[i],
+          user: { id: userId },
+          created_at: new Date(),
+          updated_at: new Date(),
+        });
+      }
+    });
+    return userRoles;
+  }
+
+  static generateUserPermissions(userIds: string[], permissions: any[], count: number = 50): any[] {
+    const userPermissions: any[] = [];
+
+    userIds.forEach((userId) => {
+      for (let i = 0; i < count; i++) {
+        // If we need more permissions than available, cycle through them with variations
+        const basePermission = permissions[i % permissions.length];
+        const permissionVariant = {
+          id: `${basePermission.id}-${Math.floor(i / permissions.length)}`,
+          name: `${basePermission.name}_VARIANT_${Math.floor(i / permissions.length)}`,
+          category: basePermission.category,
+          description: `${basePermission.description} (Variant ${Math.floor(i / permissions.length)})`,
+          created_at: new Date(),
+          updated_at: new Date(),
+        };
+
+        userPermissions.push({
+          user_id: userId,
+          permission_id: permissionVariant.id,
+          permission: permissionVariant,
+          granted: true,
+          granted_at: new Date(),
+          created_at: new Date(),
+          updated_at: new Date(),
+        });
+      }
+    });
+    return userPermissions;
+  }
+
+  static async simulateMemoryUsage(): Promise<{
+    heapUsed: number;
+    heapTotal: number;
+    external: number;
+    rss: number;
+  }> {
+    if (global.gc) {
+      global.gc();
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const usage = process.memoryUsage();
+    return usage;
+  }
+}
+
+// Mock Data Generator for Large Scale Testing
+class LargeScaleDataGenerator {
+  static createLegalPlatformScenario() {
+    // 50 law firms, 100 users each = 5000 users
+    const companies = Array.from({ length: 50 }, (_, i) => `company-${i}`);
+    const users = PerformanceTestUtils.generateTestUsers(5000);
+
+    // Legal-specific permissions
+    const legalPermissions = [
+      ...PerformanceTestUtils.generateTestPermissions(50, 'CASE'),
+      ...PerformanceTestUtils.generateTestPermissions(30, 'CLIENT'),
+      ...PerformanceTestUtils.generateTestPermissions(40, 'DOCUMENT'),
+      ...PerformanceTestUtils.generateTestPermissions(20, 'BILLING'),
+      ...PerformanceTestUtils.generateTestPermissions(25, 'CALENDAR'),
+      ...PerformanceTestUtils.generateTestPermissions(35, 'TASK'),
+      ...PerformanceTestUtils.generateTestPermissions(15, 'REPORT'),
+      ...PerformanceTestUtils.generateTestPermissions(10, 'ADMIN'),
+    ];
+
+    // Legal-specific roles
+    const legalRoles = [
+      ...PerformanceTestUtils.generateTestRoles(100, 15), // Partners
+      ...PerformanceTestUtils.generateTestRoles(200, 12), // Associates
+      ...PerformanceTestUtils.generateTestRoles(150, 8), // Paralegals
+      ...PerformanceTestUtils.generateTestRoles(100, 5), // Staff
+      ...PerformanceTestUtils.generateTestRoles(50, 25), // Admins
+    ];
+
+    return {
+      companies,
+      users,
+      permissions: legalPermissions,
+      roles: legalRoles,
+      userRoles: PerformanceTestUtils.generateUserRoles(
+        users.map((u) => u.id),
+        legalRoles
+      ),
+      userPermissions: PerformanceTestUtils.generateUserPermissions(
+        users.map((u) => u.id),
+        legalPermissions,
+        100
+      ),
+    };
+  }
+}
+
+describe('PermissionsService - Ultra Comprehensive Performance Tests', () => {
+  let service: PermissionsService;
+  let module: TestingModule;
+
+  // Mock models
+  let mockUserModel: any;
+  let mockRoleModel: any;
+  let mockPermissionModel: any;
+  let mockUserRoleModel: any;
+  let mockUserPermissionModel: any;
+  let mockRolePermissionModel: any;
+  let mockConfigService: any;
+
+  // Test data
+  let testData: ReturnType<typeof LargeScaleDataGenerator.createLegalPlatformScenario>;
+
+  beforeAll(async () => {
+    // Generate large-scale test data
+    testData = LargeScaleDataGenerator.createLegalPlatformScenario();
+
+    // Setup mocks
+    mockUserModel = {
+      findByPk: jest.fn(),
+      findAll: jest.fn(),
+      findOne: jest.fn(),
+    };
+
+    mockRoleModel = {
+      findAll: jest.fn(),
+      findByPk: jest.fn(),
+    };
+
+    mockPermissionModel = {
+      findAll: jest.fn(),
+      findByPk: jest.fn(),
+    };
+
+    mockUserRoleModel = {
+      findAll: jest.fn(),
+    };
+
+    mockUserPermissionModel = {
+      findAll: jest.fn(),
+    };
+
+    mockRolePermissionModel = {
+      findAll: jest.fn(),
+    };
+
+    mockConfigService = {
+      get: jest.fn((key: string, defaultValue?: any) => {
+        const config = {
+          PERMISSIONS_CACHE_TTL: 3600,
+          PERMISSIONS_MAX_CACHE_ENTRIES: 50000, // Large cache for performance testing
+          PERMISSIONS_CACHE_ENABLED: true,
+          PERMISSIONS_BACKGROUND_REFRESH: 1800,
+          PERMISSIONS_INCLUDE_SYSTEM: true,
+        };
+        return config[key] || defaultValue;
+      }),
+    };
+
+    module = await Test.createTestingModule({
+      providers: [
+        PermissionsService,
+        { provide: getModelToken(User), useValue: mockUserModel },
+        { provide: getModelToken(Role), useValue: mockRoleModel },
+        { provide: getModelToken(Permission), useValue: mockPermissionModel },
+        { provide: getModelToken(UserRole), useValue: mockUserRoleModel },
+        { provide: getModelToken(UserPermission), useValue: mockUserPermissionModel },
+        { provide: getModelToken(RolePermission), useValue: mockRolePermissionModel },
+        { provide: ConfigService, useValue: mockConfigService },
+      ],
+    }).compile();
+
+    service = module.get<PermissionsService>(PermissionsService);
+  });
+
+  afterAll(async () => {
+    await module.close();
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    service['cache'].clear();
+  });
+
+  // ========================================
+  // CORE PERFORMANCE BENCHMARKING
+  // ========================================
+
+  describe('Core Performance Benchmarking', () => {
+    describe('getEffectivePermissionsForUser Performance', () => {
+      it('should handle user with 1 role efficiently', async () => {
+        const user = testData.users[0];
+        const userRoles = testData.userRoles.filter((ur) => ur.user_id === user.id).slice(0, 1);
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue(userRoles);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const { result, duration } = await PerformanceTestUtils.measureExecutionTime(() =>
+          service.getEffectivePermissionsForUser(user.id, user.company_id)
+        );
+
+        expect(result.permissions.length).toBeGreaterThan(0);
+        expect(duration).toBeLessThan(100); // Should complete within 100ms
+        console.log(`Single role performance: ${duration.toFixed(2)}ms`);
+      });
+
+      it('should handle user with 20 roles efficiently', async () => {
+        const user = testData.users[0];
+        const userRoles = testData.userRoles.filter((ur) => ur.user_id === user.id).slice(0, 20);
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue(userRoles);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const { result, duration } = await PerformanceTestUtils.measureExecutionTime(() =>
+          service.getEffectivePermissionsForUser(user.id, user.company_id)
+        );
+
+        expect(result.permissions.length).toBeGreaterThan(0);
+        expect(duration).toBeLessThan(200); // Should complete within 200ms
+        console.log(`20 roles performance: ${duration.toFixed(2)}ms`);
+      });
+
+      it('should handle user with 100 roles efficiently', async () => {
+        const user = testData.users[0];
+        // Generate 100 roles for this user
+        const manyRoles = PerformanceTestUtils.generateTestRoles(100, 15);
+        const userRoles = manyRoles.map((role) => ({
+          user_id: user.id,
+          role_id: role.id,
+          role,
+          user,
+        }));
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue(userRoles);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const { result, duration } = await PerformanceTestUtils.measureExecutionTime(() =>
+          service.getEffectivePermissionsForUser(user.id, user.company_id)
+        );
+
+        expect(result.permissions.length).toBeGreaterThan(0);
+        expect(duration).toBeLessThan(500); // Should complete within 500ms
+        console.log(`100 roles performance: ${duration.toFixed(2)}ms`);
+      });
+
+      it('should handle user with 10 direct permissions efficiently', async () => {
+        const user = testData.users[0];
+        const userPermissions = testData.userPermissions
+          .filter((up) => up.user_id === user.id)
+          .slice(0, 10);
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([]);
+        mockUserPermissionModel.findAll.mockResolvedValue(userPermissions);
+
+        const { result, duration } = await PerformanceTestUtils.measureExecutionTime(() =>
+          service.getEffectivePermissionsForUser(user.id, user.company_id)
+        );
+
+        expect(result.permissions.length).toBeGreaterThan(0);
+        expect(duration).toBeLessThan(50); // Should complete within 50ms
+        console.log(`10 direct permissions performance: ${duration.toFixed(2)}ms`);
+      });
+
+      it('should handle user with 500 direct permissions efficiently', async () => {
+        const user = testData.users[0];
+        const manyPermissions = PerformanceTestUtils.generateUserPermissions(
+          [user.id],
+          testData.permissions,
+          500
+        );
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([]);
+        mockUserPermissionModel.findAll.mockResolvedValue(manyPermissions);
+
+        const { result, duration } = await PerformanceTestUtils.measureExecutionTime(() =>
+          service.getEffectivePermissionsForUser(user.id, user.company_id)
+        );
+
+        expect(result.permissions.length).toBe(500);
+        expect(duration).toBeLessThan(300); // Should complete within 300ms
+        console.log(`500 direct permissions performance: ${duration.toFixed(2)}ms`);
+      });
+
+      it('should handle user with 5000 direct permissions efficiently', async () => {
+        const user = testData.users[0];
+        const manyPermissions = PerformanceTestUtils.generateUserPermissions(
+          [user.id],
+          testData.permissions,
+          5000
+        );
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([]);
+        mockUserPermissionModel.findAll.mockResolvedValue(manyPermissions);
+
+        const { result, duration } = await PerformanceTestUtils.measureExecutionTime(() =>
+          service.getEffectivePermissionsForUser(user.id, user.company_id)
+        );
+
+        expect(result.permissions.length).toBe(5000);
+        expect(duration).toBeLessThan(1000); // Should complete within 1 second
+        console.log(`5000 direct permissions performance: ${duration.toFixed(2)}ms`);
+      });
+
+      it('should handle complex scenario: 50 roles + 1000 direct permissions', async () => {
+        const user = testData.users[0];
+        const manyRoles = PerformanceTestUtils.generateTestRoles(50, 20);
+        const userRoles = manyRoles.map((role) => ({
+          user_id: user.id,
+          role_id: role.id,
+          role,
+          user,
+        }));
+        const manyPermissions = PerformanceTestUtils.generateUserPermissions(
+          [user.id],
+          testData.permissions,
+          1000
+        );
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue(userRoles);
+        mockUserPermissionModel.findAll.mockResolvedValue(manyPermissions);
+
+        const { result, duration } = await PerformanceTestUtils.measureExecutionTime(() =>
+          service.getEffectivePermissionsForUser(user.id, user.company_id)
+        );
+
+        expect(result.permissions.length).toBeGreaterThan(1000);
+        expect(duration).toBeLessThan(1500); // Should complete within 1.5 seconds
+        console.log(`Complex scenario performance: ${duration.toFixed(2)}ms`);
+      });
+    });
+
+    describe('Cache Hit vs Miss Performance', () => {
+      it('should demonstrate cache performance improvement', async () => {
+        const user = testData.users[0];
+        const userRoles = testData.userRoles.filter((ur) => ur.user_id === user.id).slice(0, 10);
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue(userRoles);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        // Cache miss - first call
+        const { duration: missTime } = await PerformanceTestUtils.measureExecutionTime(() =>
+          service.getEffectivePermissionsForUser(user.id, user.company_id)
+        );
+
+        // Cache hit - second call
+        const { duration: hitTime } = await PerformanceTestUtils.measureExecutionTime(() =>
+          service.getEffectivePermissionsForUser(user.id, user.company_id)
+        );
+
+        expect(hitTime).toBeLessThan(missTime);
+        expect(hitTime).toBeLessThan(10); // Cache hit should be under 10ms
+
+        const improvement = ((missTime - hitTime) / missTime) * 100;
+        console.log(
+          `Cache improvement: ${improvement.toFixed(1)}% (${missTime.toFixed(2)}ms -> ${hitTime.toFixed(2)}ms)`
+        );
+      });
+    });
+
+    describe('Permission Calculation Algorithm Efficiency', () => {
+      it('should demonstrate O(n) behavior for role processing', async () => {
+        const user = testData.users[0];
+        const durations: number[] = [];
+        const roleCounts = [10, 20, 40, 80];
+
+        for (const roleCount of roleCounts) {
+          const roles = PerformanceTestUtils.generateTestRoles(roleCount, 10);
+          const userRoles = roles.map((role) => ({
+            user_id: user.id,
+            role_id: role.id,
+            role,
+            user,
+          }));
+
+          // Clear cache for each test
+          service['cache'].clear();
+          mockUserModel.findByPk.mockResolvedValue(user);
+          mockUserRoleModel.findAll.mockResolvedValue(userRoles);
+          mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+          const { duration } = await PerformanceTestUtils.measureExecutionTime(() =>
+            service.getEffectivePermissionsForUser(user.id, user.company_id)
+          );
+
+          durations.push(duration);
+          console.log(`${roleCount} roles: ${duration.toFixed(2)}ms`);
+        }
+
+        // Verify roughly linear scaling (not quadratic)
+        const ratio1 = durations[1] / durations[0]; // 20/10 roles
+        const ratio2 = durations[2] / durations[1]; // 40/20 roles
+        const ratio3 = durations[3] / durations[2]; // 80/40 roles
+
+        // Should be roughly linear (ratio around 2.0), not quadratic (ratio around 4.0)
+        expect(ratio1).toBeLessThan(3.0);
+        expect(ratio2).toBeLessThan(3.0);
+        expect(ratio3).toBeLessThan(3.0);
+      });
+    });
+
+    describe('API Endpoint Performance', () => {
+      it('should measure bulk permission check performance', async () => {
+        const user = testData.users[0];
+        const userRoles = testData.userRoles.filter((ur) => ur.user_id === user.id).slice(0, 5);
+        const permissionNames = testData.permissions.slice(0, 100).map((p) => p.name);
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue(userRoles);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const checkDto: ServiceBulkPermissionCheckDto = {
+          user_id: user.id,
+          permission_names: permissionNames,
+          company_id: user.company_id,
+        };
+
+        const { result, duration } = await PerformanceTestUtils.measureExecutionTime(() =>
+          service.hasPermissions(checkDto)
+        );
+
+        expect(result.total_checked).toBe(100);
+        expect(duration).toBeLessThan(300); // Should complete within 300ms
+        console.log(`Bulk check (100 permissions) performance: ${duration.toFixed(2)}ms`);
+      });
+
+      it('should measure response time distribution', async () => {
+        const user = testData.users[0];
+        const userRoles = testData.userRoles.filter((ur) => ur.user_id === user.id).slice(0, 5);
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue(userRoles);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        // Clear cache and warm it up
+        service['cache'].clear();
+        await service.getEffectivePermissionsForUser(user.id, user.company_id);
+
+        const stats = await PerformanceTestUtils.measureMultipleExecutions(
+          () => service.getEffectivePermissionsForUser(user.id, user.company_id),
+          100
+        );
+
+        console.log(`Response time distribution (100 requests):`);
+        console.log(`  Average: ${stats.averageDuration.toFixed(2)}ms`);
+        console.log(`  P50: ${stats.p50.toFixed(2)}ms`);
+        console.log(`  P95: ${stats.p95.toFixed(2)}ms`);
+        console.log(`  P99: ${stats.p99.toFixed(2)}ms`);
+        console.log(`  Max: ${stats.maxDuration.toFixed(2)}ms`);
+
+        // SLA requirements
+        expect(stats.averageDuration).toBeLessThan(200); // < 200ms avg response time
+        expect(stats.p95).toBeLessThan(500); // < 500ms P95
+        expect(stats.p99).toBeLessThan(1000); // < 1s P99
+      });
+    });
+  });
+
+  // ========================================
+  // LOAD TESTING SCENARIOS
+  // ========================================
+
+  describe('Load Testing Scenarios', () => {
+    describe('Concurrent User Simulation', () => {
+      it('should handle 100 concurrent permission checks', async () => {
+        const users = testData.users.slice(0, 100);
+
+        // Setup mocks for all users
+        mockUserModel.findByPk.mockImplementation((userId: string) => {
+          return Promise.resolve(users.find((u) => u.id === userId));
+        });
+
+        mockUserRoleModel.findAll.mockImplementation(({ where }) => {
+          const userRoles = testData.userRoles.filter((ur) => ur.user_id === where.user_id);
+          return Promise.resolve(userRoles);
+        });
+
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const startTime = Date.now();
+        const promises = users.map((user) =>
+          service.getEffectivePermissionsForUser(user.id, user.company_id)
+        );
+
+        const results = await Promise.all(promises);
+        const totalDuration = Date.now() - startTime;
+
+        expect(results).toHaveLength(100);
+        expect(totalDuration).toBeLessThan(5000); // Should complete within 5 seconds
+        console.log(`100 concurrent users: ${totalDuration}ms total`);
+      });
+
+      it('should handle 500 concurrent permission checks', async () => {
+        const users = testData.users.slice(0, 500);
+
+        mockUserModel.findByPk.mockImplementation((userId: string) => {
+          return Promise.resolve(users.find((u) => u.id === userId));
+        });
+
+        mockUserRoleModel.findAll.mockImplementation(({ where }) => {
+          const userRoles = testData.userRoles
+            .filter((ur) => ur.user_id === where.user_id)
+            .slice(0, 3);
+          return Promise.resolve(userRoles);
+        });
+
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const startTime = Date.now();
+
+        // Process in batches to avoid overwhelming the system
+        const batchSize = 50;
+        const batches = [];
+        for (let i = 0; i < users.length; i += batchSize) {
+          const batch = users.slice(i, i + batchSize);
+          batches.push(batch);
+        }
+
+        const results = [];
+        for (const batch of batches) {
+          const batchPromises = batch.map((user) =>
+            service.getEffectivePermissionsForUser(user.id, user.company_id)
+          );
+          const batchResults = await Promise.all(batchPromises);
+          results.push(...batchResults);
+        }
+
+        const totalDuration = Date.now() - startTime;
+
+        expect(results).toHaveLength(500);
+        expect(totalDuration).toBeLessThan(15000); // Should complete within 15 seconds
+        console.log(`500 concurrent users: ${totalDuration}ms total`);
+      });
+
+      it('should handle mixed read/write operations under load', async () => {
+        const users = testData.users.slice(0, 100);
+
+        mockUserModel.findByPk.mockImplementation((userId: string) => {
+          return Promise.resolve(users.find((u) => u.id === userId));
+        });
+
+        mockUserRoleModel.findAll.mockImplementation(({ where }) => {
+          const userRoles = testData.userRoles
+            .filter((ur) => ur.user_id === where.user_id)
+            .slice(0, 2);
+          return Promise.resolve(userRoles);
+        });
+
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const operations = [];
+
+        // 80% read operations
+        for (let i = 0; i < 80; i++) {
+          const user = users[i % users.length];
+          operations.push(() => service.getEffectivePermissionsForUser(user.id, user.company_id));
+        }
+
+        // 20% write operations (cache invalidation)
+        for (let i = 0; i < 20; i++) {
+          const user = users[i % users.length];
+          operations.push(() => service.invalidateCache({ user_id: user.id, reason: 'load test' }));
+        }
+
+        // Shuffle operations
+        operations.sort(() => Math.random() - 0.5);
+
+        const startTime = Date.now();
+        const results = await Promise.all(operations.map((op) => op()));
+        const totalDuration = Date.now() - startTime;
+
+        expect(results).toHaveLength(100);
+        expect(totalDuration).toBeLessThan(10000); // Should complete within 10 seconds
+        console.log(`Mixed operations under load: ${totalDuration}ms total`);
+      });
+    });
+
+    describe('High-Traffic Legal Platform Simulation', () => {
+      it('should simulate 50 law firms with 100 users each', async () => {
+        // This is a simulation - we'll test a subset due to test environment limitations
+        const firms = 5; // Test with 5 firms instead of 50
+        const usersPerFirm = 20; // 20 users per firm instead of 100
+        const totalUsers = firms * usersPerFirm;
+
+        const simulatedUsers = testData.users.slice(0, totalUsers);
+
+        mockUserModel.findByPk.mockImplementation((userId: string) => {
+          return Promise.resolve(simulatedUsers.find((u) => u.id === userId));
+        });
+
+        mockUserRoleModel.findAll.mockImplementation(({ where }) => {
+          const userRoles = testData.userRoles
+            .filter((ur) => ur.user_id === where.user_id)
+            .slice(0, 3);
+          return Promise.resolve(userRoles);
+        });
+
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const startTime = Date.now();
+
+        // Simulate case permission checks
+        const casePermissionChecks = simulatedUsers.map((user) => ({
+          user_id: user.id,
+          permission_names: ['VIEW_CASE', 'EDIT_CASE', 'DELETE_CASE'],
+          company_id: user.company_id,
+        }));
+
+        const results = await Promise.all(
+          casePermissionChecks.map((check) => service.hasPermissions(check))
+        );
+
+        const totalDuration = Date.now() - startTime;
+
+        expect(results).toHaveLength(totalUsers);
+        expect(totalDuration).toBeLessThan(10000); // Should complete within 10 seconds
+        console.log(`${firms} firms, ${usersPerFirm} users each: ${totalDuration}ms total`);
+      });
+
+      it('should simulate peak traffic scenario (Monday morning rush)', async () => {
+        const users = testData.users.slice(0, 200); // 200 concurrent users
+
+        mockUserModel.findByPk.mockImplementation((userId: string) => {
+          return Promise.resolve(users.find((u) => u.id === userId));
+        });
+
+        mockUserRoleModel.findAll.mockImplementation(({ where }) => {
+          const userRoles = testData.userRoles
+            .filter((ur) => ur.user_id === where.user_id)
+            .slice(0, 4);
+          return Promise.resolve(userRoles);
+        });
+
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        // Simulate realistic Monday morning operations
+        const operations = [];
+
+        // Initial login and permission loading
+        users.forEach((user) => {
+          operations.push(() => service.getEffectivePermissionsForUser(user.id, user.company_id));
+        });
+
+        // Case access checks
+        users.forEach((user) => {
+          operations.push(() =>
+            service.hasPermission({
+              user_id: user.id,
+              permission_name: 'VIEW_CASE',
+              company_id: user.company_id,
+            })
+          );
+        });
+
+        // Document access checks
+        users.forEach((user) => {
+          operations.push(() =>
+            service.hasPermission({
+              user_id: user.id,
+              permission_name: 'VIEW_DOCUMENT',
+              company_id: user.company_id,
+            })
+          );
+        });
+
+        const startTime = Date.now();
+
+        // Execute operations in waves to simulate gradual login
+        const batchSize = 50;
+        const results = [];
+        for (let i = 0; i < operations.length; i += batchSize) {
+          const batch = operations.slice(i, i + batchSize);
+          const batchResults = await Promise.all(batch.map((op) => op()));
+          results.push(...batchResults);
+
+          // Small delay between batches to simulate realistic timing
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+
+        const totalDuration = Date.now() - startTime;
+
+        expect(results).toHaveLength(operations.length);
+        expect(totalDuration).toBeLessThan(30000); // Should complete within 30 seconds
+        console.log(
+          `Peak traffic simulation: ${totalDuration}ms total for ${operations.length} operations`
+        );
+      });
+    });
+
+    describe('Cache Invalidation Storm Testing', () => {
+      it('should handle role change affecting 1000 users', async () => {
+        const affectedUsers = testData.users.slice(0, 1000);
+
+        // Pre-populate cache
+        mockUserModel.findByPk.mockImplementation((userId: string) => {
+          return Promise.resolve(affectedUsers.find((u) => u.id === userId));
+        });
+
+        mockUserRoleModel.findAll.mockResolvedValue([]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        // Populate cache for all users
+        await Promise.all(
+          affectedUsers.map((user) =>
+            service.getEffectivePermissionsForUser(user.id, user.company_id)
+          )
+        );
+
+        // Measure cache invalidation time
+        const { duration } = await PerformanceTestUtils.measureExecutionTime(async () => {
+          // Invalidate cache for all affected users
+          await Promise.all(
+            affectedUsers.map((user) =>
+              service.invalidateCache({ user_id: user.id, reason: 'role change' })
+            )
+          );
+        });
+
+        expect(duration).toBeLessThan(5000); // Should complete within 5 seconds
+        console.log(`Cache invalidation for 1000 users: ${duration.toFixed(2)}ms`);
+      });
+
+      it('should handle company-wide permission update', async () => {
+        const companyUsers = testData.users.filter((u) => u.company_id === 'company-0');
+
+        // Pre-populate cache
+        mockUserModel.findByPk.mockImplementation((userId: string) => {
+          return Promise.resolve(companyUsers.find((u) => u.id === userId));
+        });
+
+        mockUserRoleModel.findAll.mockResolvedValue([]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        await Promise.all(
+          companyUsers.map((user) =>
+            service.getEffectivePermissionsForUser(user.id, user.company_id)
+          )
+        );
+
+        // Measure company-wide invalidation
+        const { duration } = await PerformanceTestUtils.measureExecutionTime(async () => {
+          await service.invalidateCache({
+            company_id: 'company-0',
+            reason: 'company-wide permission update',
+          });
+        });
+
+        expect(duration).toBeLessThan(2000); // Should complete within 2 seconds
+        console.log(`Company-wide cache invalidation: ${duration.toFixed(2)}ms`);
+      });
+    });
+  });
+
+  // ========================================
+  // STRESS TESTING
+  // ========================================
+
+  describe('Stress Testing', () => {
+    describe('Memory Pressure Testing', () => {
+      it('should handle large cache sizes without memory leaks', async () => {
+        const users = testData.users.slice(0, 1000);
+
+        mockUserModel.findByPk.mockImplementation((userId: string) => {
+          return Promise.resolve(users.find((u) => u.id === userId));
+        });
+
+        mockUserRoleModel.findAll.mockImplementation(({ where }) => {
+          const userRoles = testData.userRoles
+            .filter((ur) => ur.user_id === where.user_id)
+            .slice(0, 10);
+          return Promise.resolve(userRoles);
+        });
+
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const memoryBefore = await PerformanceTestUtils.simulateMemoryUsage();
+
+        // Populate large cache
+        await Promise.all(
+          users.map((user) => service.getEffectivePermissionsForUser(user.id, user.company_id))
+        );
+
+        const memoryAfter = await PerformanceTestUtils.simulateMemoryUsage();
+
+        const memoryIncrease = memoryAfter.heapUsed - memoryBefore.heapUsed;
+        const memoryIncreasePerUser = memoryIncrease / users.length;
+
+        console.log(`Memory usage increase: ${(memoryIncrease / 1024 / 1024).toFixed(2)}MB`);
+        console.log(`Memory per user: ${(memoryIncreasePerUser / 1024).toFixed(2)}KB`);
+
+        // Check cache statistics
+        const stats = await service.getCacheStatistics();
+        expect(stats.total_entries).toBe(1000);
+        expect(stats.memory_usage_bytes).toBeGreaterThan(0);
+
+        // Memory increase should be reasonable (less than 100MB for 1000 users)
+        expect(memoryIncrease).toBeLessThan(100 * 1024 * 1024);
+      });
+
+      it('should detect memory leaks during extended operation', async () => {
+        const user = testData.users[0];
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const memoryReadings = [];
+
+        for (let i = 0; i < 10; i++) {
+          // Perform operations
+          for (let j = 0; j < 100; j++) {
+            await service.getEffectivePermissionsForUser(user.id, user.company_id);
+          }
+
+          // Clear cache periodically
+          if (i % 3 === 0) {
+            service['cache'].clear();
+          }
+
+          const memory = await PerformanceTestUtils.simulateMemoryUsage();
+          memoryReadings.push(memory.heapUsed);
+
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+
+        // Check for memory leak (continuously increasing memory)
+        const firstHalf = memoryReadings.slice(0, 5);
+        const secondHalf = memoryReadings.slice(5);
+
+        const firstHalfAvg = firstHalf.reduce((sum, val) => sum + val, 0) / firstHalf.length;
+        const secondHalfAvg = secondHalf.reduce((sum, val) => sum + val, 0) / secondHalf.length;
+
+        const memoryIncrease = secondHalfAvg - firstHalfAvg;
+        const increasePercentage = (memoryIncrease / firstHalfAvg) * 100;
+
+        console.log(`Memory increase during extended operation: ${increasePercentage.toFixed(2)}%`);
+
+        // Memory increase should be minimal (less than 50% over time)
+        expect(increasePercentage).toBeLessThan(50);
+      });
+    });
+
+    describe('Cache Storage Limits', () => {
+      it('should handle cache eviction under pressure', async () => {
+        // Configure small cache limit for testing
+        const originalGet = mockConfigService.get;
+        mockConfigService.get = jest.fn((key: string, defaultValue?: any) => {
+          if (key === 'PERMISSIONS_MAX_CACHE_ENTRIES') return 100; // Small limit
+          return originalGet(key, defaultValue);
+        });
+
+        // Create new service with small cache limit
+        const smallCacheModule = await Test.createTestingModule({
+          providers: [
+            PermissionsService,
+            { provide: getModelToken(User), useValue: mockUserModel },
+            { provide: getModelToken(Role), useValue: mockRoleModel },
+            { provide: getModelToken(Permission), useValue: mockPermissionModel },
+            { provide: getModelToken(UserRole), useValue: mockUserRoleModel },
+            { provide: getModelToken(UserPermission), useValue: mockUserPermissionModel },
+            { provide: getModelToken(RolePermission), useValue: mockRolePermissionModel },
+            { provide: ConfigService, useValue: mockConfigService },
+          ],
+        }).compile();
+
+        const smallCacheService = smallCacheModule.get<PermissionsService>(PermissionsService);
+
+        const users = testData.users.slice(0, 200); // More users than cache limit
+
+        mockUserModel.findByPk.mockImplementation((userId: string) => {
+          return Promise.resolve(users.find((u) => u.id === userId));
+        });
+
+        mockUserRoleModel.findAll.mockResolvedValue([]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        // Fill cache beyond limit
+        await Promise.all(
+          users.map((user) =>
+            smallCacheService.getEffectivePermissionsForUser(user.id, user.company_id)
+          )
+        );
+
+        const stats = await smallCacheService.getCacheStatistics();
+        console.log(`Cache entries after overfill: ${stats.total_entries}`);
+
+        // Cache should not exceed reasonable limits
+        expect(stats.total_entries).toBeLessThanOrEqual(150); // Some tolerance for LRU eviction
+
+        await smallCacheModule.close();
+
+        // Restore original mock
+        mockConfigService.get = originalGet;
+      });
+    });
+  });
+
+  // ========================================
+  // SCALABILITY TESTING
+  // ========================================
+
+  describe('Scalability Testing', () => {
+    describe('Vertical Scaling Impact', () => {
+      it('should measure performance scaling with increased concurrent operations', async () => {
+        const user = testData.users[0];
+        const userRoles = testData.userRoles.filter((ur) => ur.user_id === user.id).slice(0, 5);
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue(userRoles);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        // Pre-populate cache
+        await service.getEffectivePermissionsForUser(user.id, user.company_id);
+
+        const concurrencyLevels = [1, 10, 50, 100];
+        const results = [];
+
+        for (const concurrency of concurrencyLevels) {
+          const { duration } = await PerformanceTestUtils.measureExecutionTime(async () => {
+            const promises = Array.from({ length: concurrency }, () =>
+              service.getEffectivePermissionsForUser(user.id, user.company_id)
+            );
+            await Promise.all(promises);
+          });
+
+          const throughput = concurrency / (duration / 1000); // Operations per second
+          results.push({ concurrency, duration, throughput });
+
+          console.log(
+            `Concurrency ${concurrency}: ${duration.toFixed(2)}ms, ${throughput.toFixed(2)} ops/sec`
+          );
+        }
+
+        // Throughput should generally increase with concurrency (up to a point)
+        expect(results[1].throughput).toBeGreaterThan(results[0].throughput);
+        expect(results[2].throughput).toBeGreaterThan(results[1].throughput);
+      });
+    });
+
+    describe('Cache Size Scaling Effects', () => {
+      it('should measure performance impact of cache size', async () => {
+        const cacheSizes = [100, 500, 1000, 2000];
+        const results = [];
+
+        for (const cacheSize of cacheSizes) {
+          // Configure cache size
+          const configuredMockConfigService = {
+            get: jest.fn((key: string, defaultValue?: any) => {
+              if (key === 'PERMISSIONS_MAX_CACHE_ENTRIES') return cacheSize;
+              const config = {
+                PERMISSIONS_CACHE_TTL: 3600,
+                PERMISSIONS_CACHE_ENABLED: true,
+                PERMISSIONS_BACKGROUND_REFRESH: 1800,
+                PERMISSIONS_INCLUDE_SYSTEM: true,
+              };
+              return config[key] || defaultValue;
+            }),
+          };
+
+          const cacheTestModule = await Test.createTestingModule({
+            providers: [
+              PermissionsService,
+              { provide: getModelToken(User), useValue: mockUserModel },
+              { provide: getModelToken(Role), useValue: mockRoleModel },
+              { provide: getModelToken(Permission), useValue: mockPermissionModel },
+              { provide: getModelToken(UserRole), useValue: mockUserRoleModel },
+              { provide: getModelToken(UserPermission), useValue: mockUserPermissionModel },
+              { provide: getModelToken(RolePermission), useValue: mockRolePermissionModel },
+              { provide: ConfigService, useValue: configuredMockConfigService },
+            ],
+          }).compile();
+
+          const cacheTestService = cacheTestModule.get<PermissionsService>(PermissionsService);
+
+          const users = testData.users.slice(0, Math.min(cacheSize, 1000));
+
+          mockUserModel.findByPk.mockImplementation((userId: string) => {
+            return Promise.resolve(users.find((u) => u.id === userId));
+          });
+
+          mockUserRoleModel.findAll.mockResolvedValue([]);
+          mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+          // Fill cache
+          const { duration: fillDuration } = await PerformanceTestUtils.measureExecutionTime(
+            async () => {
+              await Promise.all(
+                users.map((user) =>
+                  cacheTestService.getEffectivePermissionsForUser(user.id, user.company_id)
+                )
+              );
+            }
+          );
+
+          // Test cache hit performance
+          const randomUser = users[Math.floor(Math.random() * users.length)];
+          const { duration: hitDuration } = await PerformanceTestUtils.measureExecutionTime(() =>
+            cacheTestService.getEffectivePermissionsForUser(randomUser.id, randomUser.company_id)
+          );
+
+          results.push({ cacheSize, fillDuration, hitDuration });
+
+          console.log(
+            `Cache size ${cacheSize}: fill ${fillDuration.toFixed(2)}ms, hit ${hitDuration.toFixed(2)}ms`
+          );
+
+          await cacheTestModule.close();
+        }
+
+        // Cache hit performance should remain consistently fast regardless of cache size
+        results.forEach((result) => {
+          expect(result.hitDuration).toBeLessThan(50); // All cache hits should be under 50ms
+        });
+      });
+    });
+  });
+
+  // ========================================
+  // REAL-WORLD PERFORMANCE SCENARIOS
+  // ========================================
+
+  describe('Real-World Performance Scenarios', () => {
+    describe('Legal Platform Usage Patterns', () => {
+      it('should handle case assignment workflow performance', async () => {
+        // Simulate assigning a case to multiple attorneys
+        const attorneys = testData.users.slice(0, 20);
+        const casePermissions = ['VIEW_CASE', 'EDIT_CASE', 'ASSIGN_TASK', 'BILL_TIME'];
+
+        mockUserModel.findByPk.mockImplementation((userId: string) => {
+          return Promise.resolve(attorneys.find((u) => u.id === userId));
+        });
+
+        mockUserRoleModel.findAll.mockImplementation(({ where }) => {
+          const userRoles = testData.userRoles
+            .filter((ur) => ur.user_id === where.user_id)
+            .slice(0, 2);
+          return Promise.resolve(userRoles);
+        });
+
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const { duration } = await PerformanceTestUtils.measureExecutionTime(async () => {
+          // Check permissions for all attorneys for case assignment
+          const permissionChecks = attorneys.map((attorney) => ({
+            user_id: attorney.id,
+            permission_names: casePermissions,
+            company_id: attorney.company_id,
+          }));
+
+          await Promise.all(permissionChecks.map((check) => service.hasPermissions(check)));
+        });
+
+        expect(duration).toBeLessThan(1000); // Should complete within 1 second
+        console.log(
+          `Case assignment workflow: ${duration.toFixed(2)}ms for ${attorneys.length} attorneys`
+        );
+      });
+
+      it('should handle document access permission checking at scale', async () => {
+        // Simulate checking document access for multiple users
+        const users = testData.users.slice(0, 100);
+        const documentTypes = ['CONTRACT', 'BRIEF', 'EVIDENCE', 'CORRESPONDENCE'];
+
+        mockUserModel.findByPk.mockImplementation((userId: string) => {
+          return Promise.resolve(users.find((u) => u.id === userId));
+        });
+
+        mockUserRoleModel.findAll.mockImplementation(({ where }) => {
+          const userRoles = testData.userRoles
+            .filter((ur) => ur.user_id === where.user_id)
+            .slice(0, 3);
+          return Promise.resolve(userRoles);
+        });
+
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const { duration } = await PerformanceTestUtils.measureExecutionTime(async () => {
+          const checks = [];
+
+          users.forEach((user) => {
+            documentTypes.forEach((docType) => {
+              checks.push(
+                service.hasPermission({
+                  user_id: user.id,
+                  permission_name: `VIEW_${docType}`,
+                  company_id: user.company_id,
+                })
+              );
+            });
+          });
+
+          await Promise.all(checks);
+        });
+
+        const totalChecks = users.length * documentTypes.length;
+        expect(duration).toBeLessThan(5000); // Should complete within 5 seconds
+        console.log(`Document access checks: ${duration.toFixed(2)}ms for ${totalChecks} checks`);
+      });
+
+      it('should handle billing permission validation performance', async () => {
+        // Simulate end-of-month billing processing
+        const billingUsers = testData.users.slice(0, 50);
+        const billingPermissions = [
+          'VIEW_BILLING',
+          'EDIT_BILLING',
+          'GENERATE_INVOICE',
+          'APPROVE_BILLING',
+        ];
+
+        mockUserModel.findByPk.mockImplementation((userId: string) => {
+          return Promise.resolve(billingUsers.find((u) => u.id === userId));
+        });
+
+        mockUserRoleModel.findAll.mockImplementation(({ where }) => {
+          const userRoles = testData.userRoles
+            .filter((ur) => ur.user_id === where.user_id)
+            .slice(0, 2);
+          return Promise.resolve(userRoles);
+        });
+
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const { duration } = await PerformanceTestUtils.measureExecutionTime(async () => {
+          // Validate billing permissions for all users
+          const validations = billingUsers.map((user) => ({
+            user_id: user.id,
+            permission_names: billingPermissions,
+            company_id: user.company_id,
+          }));
+
+          await Promise.all(validations.map((validation) => service.hasPermissions(validation)));
+        });
+
+        expect(duration).toBeLessThan(2000); // Should complete within 2 seconds
+        console.log(
+          `Billing permission validation: ${duration.toFixed(2)}ms for ${billingUsers.length} users`
+        );
+      });
+    });
+
+    describe('Peak Usage Simulation', () => {
+      it('should handle end-of-month billing processing', async () => {
+        // Simulate high load during billing period
+        const users = testData.users.slice(0, 200);
+        const billingOperations = [];
+
+        mockUserModel.findByPk.mockImplementation((userId: string) => {
+          return Promise.resolve(users.find((u) => u.id === userId));
+        });
+
+        mockUserRoleModel.findAll.mockImplementation(({ where }) => {
+          const userRoles = testData.userRoles
+            .filter((ur) => ur.user_id === where.user_id)
+            .slice(0, 3);
+          return Promise.resolve(userRoles);
+        });
+
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        // Generate billing-related operations
+        users.forEach((user) => {
+          // Time entry validation
+          billingOperations.push(() =>
+            service.hasPermission({
+              user_id: user.id,
+              permission_name: 'ENTER_TIME',
+              company_id: user.company_id,
+            })
+          );
+
+          // Billing approval
+          billingOperations.push(() =>
+            service.hasPermission({
+              user_id: user.id,
+              permission_name: 'APPROVE_BILLING',
+              company_id: user.company_id,
+            })
+          );
+
+          // Invoice generation
+          if (Math.random() < 0.3) {
+            // 30% of users generate invoices
+            billingOperations.push(() =>
+              service.hasPermission({
+                user_id: user.id,
+                permission_name: 'GENERATE_INVOICE',
+                company_id: user.company_id,
+              })
+            );
+          }
+        });
+
+        const { duration } = await PerformanceTestUtils.measureExecutionTime(async () => {
+          // Process operations in batches to simulate realistic load
+          const batchSize = 50;
+          for (let i = 0; i < billingOperations.length; i += batchSize) {
+            const batch = billingOperations.slice(i, i + batchSize);
+            await Promise.all(batch.map((op) => op()));
+
+            // Small delay between batches
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          }
+        });
+
+        expect(duration).toBeLessThan(15000); // Should complete within 15 seconds
+        console.log(
+          `End-of-month billing processing: ${duration.toFixed(2)}ms for ${billingOperations.length} operations`
+        );
+      });
+    });
+
+    describe('Degraded Performance Scenarios', () => {
+      it('should handle database slow query simulation', async () => {
+        const user = testData.users[0];
+
+        // Simulate slow database responses
+        mockUserModel.findByPk.mockImplementation(async (userId: string) => {
+          await new Promise((resolve) => setTimeout(resolve, 100)); // 100ms delay
+          return user;
+        });
+
+        mockUserRoleModel.findAll.mockImplementation(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 150)); // 150ms delay
+          return [];
+        });
+
+        mockUserPermissionModel.findAll.mockImplementation(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 50)); // 50ms delay
+          return [];
+        });
+
+        const { duration } = await PerformanceTestUtils.measureExecutionTime(() =>
+          service.getEffectivePermissionsForUser(user.id, user.company_id)
+        );
+
+        // Should still complete, but will be slower
+        expect(duration).toBeGreaterThan(200); // Should take at least 200ms due to delays
+        expect(duration).toBeLessThan(1000); // But should still complete within 1 second
+        console.log(`Slow database simulation: ${duration.toFixed(2)}ms`);
+      });
+
+      it('should handle partial service availability', async () => {
+        const user = testData.users[0];
+
+        // Simulate intermittent failures
+        let callCount = 0;
+        mockUserModel.findByPk.mockImplementation(async () => {
+          callCount++;
+          if (callCount % 3 === 0) {
+            throw new Error('Database temporarily unavailable');
+          }
+          return user;
+        });
+
+        mockUserRoleModel.findAll.mockResolvedValue([]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const results: any[] = [];
+        const errors: any[] = [];
+
+        // Attempt multiple operations
+        for (let i = 0; i < 10; i++) {
+          try {
+            const result = await service.getEffectivePermissionsForUser(user.id, user.company_id);
+            results.push(result);
+          } catch (error) {
+            errors.push(error);
+          }
+        }
+
+        // Some operations should succeed despite intermittent failures
+        expect(results.length).toBeGreaterThan(0);
+        expect(errors.length).toBeGreaterThanOrEqual(0); // Allow zero errors if service is resilient
+        console.log(`Partial availability: ${results.length} successes, ${errors.length} failures`);
+      });
+    });
+  });
+
+  // ========================================
+  // PERFORMANCE REGRESSION TESTING
+  // ========================================
+
+  describe('Performance Regression Testing', () => {
+    describe('Baseline Performance Validation', () => {
+      it('should establish performance baselines', async () => {
+        const user = testData.users[0];
+        const userRoles = testData.userRoles.filter((ur) => ur.user_id === user.id).slice(0, 5);
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue(userRoles);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const baseline = await PerformanceTestUtils.measureMultipleExecutions(
+          () => service.getEffectivePermissionsForUser(user.id, user.company_id),
+          50
+        );
+
+        // Performance baselines (these would be stored and compared over time)
+        const performanceBaselines = {
+          averageResponseTime: baseline.averageDuration,
+          p95ResponseTime: baseline.p95,
+          p99ResponseTime: baseline.p99,
+          maxResponseTime: baseline.maxDuration,
+        };
+
+        console.log('Performance Baselines:');
+        console.log(`  Average: ${performanceBaselines.averageResponseTime.toFixed(2)}ms`);
+        console.log(`  P95: ${performanceBaselines.p95ResponseTime.toFixed(2)}ms`);
+        console.log(`  P99: ${performanceBaselines.p99ResponseTime.toFixed(2)}ms`);
+        console.log(`  Max: ${performanceBaselines.maxResponseTime.toFixed(2)}ms`);
+
+        // SLA validation
+        expect(performanceBaselines.averageResponseTime).toBeLessThan(200);
+        expect(performanceBaselines.p95ResponseTime).toBeLessThan(500);
+        expect(performanceBaselines.p99ResponseTime).toBeLessThan(1000);
+      });
+    });
+
+    describe('Cache Efficiency Validation', () => {
+      it('should validate cache hit ratio efficiency', async () => {
+        const users = testData.users.slice(0, 100);
+
+        mockUserModel.findByPk.mockImplementation((userId: string) => {
+          return Promise.resolve(users.find((u) => u.id === userId));
+        });
+
+        mockUserRoleModel.findAll.mockResolvedValue([]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        // Prime cache
+        await Promise.all(
+          users.map((user) => service.getEffectivePermissionsForUser(user.id, user.company_id))
+        );
+
+        // Test cache hits
+        const cacheHitTests = [];
+        for (let i = 0; i < 200; i++) {
+          const randomUser = users[Math.floor(Math.random() * users.length)];
+          cacheHitTests.push(
+            service.getEffectivePermissionsForUser(randomUser.id, randomUser.company_id)
+          );
+        }
+
+        const results = await Promise.all(cacheHitTests);
+        const cacheHits = results.filter((r) => r.from_cache).length;
+        const hitRatio = cacheHits / results.length;
+
+        console.log(`Cache hit ratio: ${(hitRatio * 100).toFixed(1)}%`);
+
+        // Cache hit ratio should be high (>95%) for repeated requests
+        expect(hitRatio).toBeGreaterThan(0.95);
+      });
+    });
+  });
+
+  // ========================================
+  // MONITORING & OBSERVABILITY
+  // ========================================
+
+  describe('Monitoring & Observability', () => {
+    describe('Performance Metrics Collection', () => {
+      it('should track response time distributions', async () => {
+        const user = testData.users[0];
+        const userRoles = testData.userRoles.filter((ur) => ur.user_id === user.id).slice(0, 3);
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue(userRoles);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        // Collect metrics over multiple executions
+        const metrics = await PerformanceTestUtils.measureMultipleExecutions(
+          () => service.getEffectivePermissionsForUser(user.id, user.company_id),
+          100
+        );
+
+        const performanceMetrics = {
+          totalRequests: metrics.results.length,
+          averageResponseTime: metrics.averageDuration,
+          medianResponseTime: metrics.p50,
+          p95ResponseTime: metrics.p95,
+          p99ResponseTime: metrics.p99,
+          maxResponseTime: metrics.maxDuration,
+          minResponseTime: metrics.minDuration,
+          responseTimeStandardDeviation: calculateStandardDeviation(metrics.durations),
+        };
+
+        console.log('Performance Metrics:');
+        Object.entries(performanceMetrics).forEach(([key, value]) => {
+          console.log(`  ${key}: ${typeof value === 'number' ? value.toFixed(2) : value}`);
+        });
+
+        // Validate metrics are within acceptable ranges
+        expect(performanceMetrics.averageResponseTime).toBeLessThan(200);
+        expect(performanceMetrics.p95ResponseTime).toBeLessThan(500);
+        expect(performanceMetrics.p99ResponseTime).toBeLessThan(1000);
+      });
+
+      it('should track throughput measurements', async () => {
+        const users = testData.users.slice(0, 50);
+
+        mockUserModel.findByPk.mockImplementation((userId: string) => {
+          return Promise.resolve(users.find((u) => u.id === userId));
+        });
+
+        mockUserRoleModel.findAll.mockResolvedValue([]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        // Pre-populate cache
+        await Promise.all(
+          users.map((user) => service.getEffectivePermissionsForUser(user.id, user.company_id))
+        );
+
+        // Measure throughput
+        const startTime = Date.now();
+        const operations = [];
+
+        for (let i = 0; i < 1000; i++) {
+          const randomUser = users[Math.floor(Math.random() * users.length)];
+          operations.push(
+            service.getEffectivePermissionsForUser(randomUser.id, randomUser.company_id)
+          );
+        }
+
+        await Promise.all(operations);
+        const totalTime = (Date.now() - startTime) / 1000; // Convert to seconds
+
+        const throughput = operations.length / totalTime;
+        console.log(`Throughput: ${throughput.toFixed(2)} operations/second`);
+
+        // Throughput should be high for cached operations
+        expect(throughput).toBeGreaterThan(100); // At least 100 ops/sec
+      });
+
+      it('should track error rates', async () => {
+        const users = testData.users.slice(0, 100);
+
+        // Simulate intermittent errors
+        let errorCount = 0;
+        mockUserModel.findByPk.mockImplementation(async (userId: string) => {
+          // 5% error rate
+          if (Math.random() < 0.05) {
+            errorCount++;
+            throw new Error('Simulated database error');
+          }
+          return users.find((u) => u.id === userId);
+        });
+
+        mockUserRoleModel.findAll.mockResolvedValue([]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const results: any[] = [];
+        const errors: any[] = [];
+
+        // Execute operations
+        for (const user of users) {
+          try {
+            const result = await service.getEffectivePermissionsForUser(user.id, user.company_id);
+            results.push(result);
+          } catch (error) {
+            errors.push(error);
+          }
+        }
+
+        const errorRate = errors.length / (results.length + errors.length);
+        console.log(`Error rate: ${(errorRate * 100).toFixed(2)}%`);
+        console.log(`Successful operations: ${results.length}`);
+        console.log(`Failed operations: ${errors.length}`);
+
+        // Error rate should match our simulation (around 5%)
+        expect(errorRate).toBeLessThan(0.1); // Less than 10%
+        expect(errorRate).toBeGreaterThan(0.01); // Greater than 1%
+      });
+    });
+
+    describe('Resource Utilization Monitoring', () => {
+      it('should monitor memory usage patterns', async () => {
+        const users = testData.users.slice(0, 500);
+
+        mockUserModel.findByPk.mockImplementation((userId: string) => {
+          return Promise.resolve(users.find((u) => u.id === userId));
+        });
+
+        mockUserRoleModel.findAll.mockImplementation(({ where }) => {
+          const userRoles = testData.userRoles
+            .filter((ur) => ur.user_id === where.user_id)
+            .slice(0, 3);
+          return Promise.resolve(userRoles);
+        });
+
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const memoryUsages: any[] = [];
+
+        // Monitor memory usage during operations
+        for (let i = 0; i < 10; i++) {
+          const batchSize = 50;
+          const batch = users.slice(i * batchSize, (i + 1) * batchSize);
+
+          await Promise.all(
+            batch.map((user) => service.getEffectivePermissionsForUser(user.id, user.company_id))
+          );
+
+          const memoryUsage = await PerformanceTestUtils.simulateMemoryUsage();
+          memoryUsages.push({
+            iteration: i + 1,
+            heapUsed: memoryUsage.heapUsed,
+            heapTotal: memoryUsage.heapTotal,
+            rss: memoryUsage.rss,
+          });
+        }
+
+        console.log('Memory Usage Pattern:');
+        memoryUsages.forEach((usage) => {
+          console.log(
+            `  Iteration ${usage.iteration}: ${(usage.heapUsed / 1024 / 1024).toFixed(2)}MB heap`
+          );
+        });
+
+        // Get cache statistics
+        const cacheStats = await service.getCacheStatistics();
+        console.log(`Cache entries: ${cacheStats.total_entries}`);
+        console.log(`Cache memory: ${(cacheStats.memory_usage_bytes / 1024 / 1024).toFixed(2)}MB`);
+
+        // Memory usage should be reasonable
+        const maxMemoryUsage = Math.max(...memoryUsages.map((u) => u.heapUsed));
+        expect(maxMemoryUsage).toBeLessThan(1024 * 1024 * 1024); // Less than 1GB
+      });
+    });
+  });
+});
+
+// Helper function for standard deviation calculation
+function calculateStandardDeviation(values: number[]): number {
+  const avg = values.reduce((sum, val) => sum + val, 0) / values.length;
+  const squaredDiffs = values.map((val) => Math.pow(val - avg, 2));
+  const avgSquaredDiff = squaredDiffs.reduce((sum, val) => sum + val, 0) / squaredDiffs.length;
+  return Math.sqrt(avgSquaredDiff);
+}

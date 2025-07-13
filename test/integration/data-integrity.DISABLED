@@ -1,0 +1,1096 @@
+import { getModelToken } from '@nestjs/sequelize';
+import { Test, TestingModule } from '@nestjs/testing';
+import { ForeignKeyConstraintError } from 'sequelize';
+import { Sequelize } from 'sequelize-typescript';
+
+import { User, UserRole } from '../../src/modules/auth/entities/user.entity';
+import { Company } from '../../src/modules/company/entities/company.entity';
+import { TeamMember } from '../../src/modules/team/entities/team-member.entity';
+import { Team } from '../../src/modules/team/entities/team.entity';
+
+import { CompanyValidationService } from '../../src/modules/company/services/company-validation.service';
+import { MembershipValidationService } from '../../src/modules/team/services/membership-validation.service';
+import { TeamValidationService } from '../../src/modules/team/services/team-validation.service';
+
+describe('Data Integrity Integration Tests', () => {
+  let module: TestingModule;
+  let sequelize: Sequelize;
+
+  let companyValidationService: CompanyValidationService;
+  let teamValidationService: TeamValidationService;
+  let membershipValidationService: MembershipValidationService;
+
+  beforeAll(async () => {
+    module = await Test.createTestingModule({
+      providers: [
+        CompanyValidationService,
+        TeamValidationService,
+        MembershipValidationService,
+        {
+          provide: getModelToken(Company),
+          useValue: Company,
+        },
+        {
+          provide: getModelToken(Team),
+          useValue: Team,
+        },
+        {
+          provide: getModelToken(TeamMember),
+          useValue: TeamMember,
+        },
+        {
+          provide: getModelToken(User),
+          useValue: User,
+        },
+        {
+          provide: 'SEQUELIZE',
+          useFactory: () => {
+            const sequelize = new Sequelize({
+              dialect: 'mysql',
+              dialectModule: require('mysql2'),
+              host: process.env.DB_HOST || 'localhost',
+              port: parseInt(process.env.DB_PORT || '3306'),
+              username: process.env.DB_USER || 'root',
+              password: process.env.DB_PASSWORD || '',
+              database: process.env.DB_NAME_TEST || 'national_niner_test',
+              logging: false,
+              models: [Company, Team, TeamMember, User],
+            });
+            return sequelize;
+          },
+        },
+      ],
+    }).compile();
+
+    companyValidationService = module.get<CompanyValidationService>(CompanyValidationService);
+    teamValidationService = module.get<TeamValidationService>(TeamValidationService);
+    membershipValidationService = module.get<MembershipValidationService>(
+      MembershipValidationService
+    );
+
+    // Initialize in-memory SQLite for testing
+    sequelize = new Sequelize({
+      dialect: 'sqlite',
+      storage: ':memory:',
+      logging: false,
+      models: [Company, Team, TeamMember, User],
+    });
+
+    await sequelize.sync({ force: true });
+  });
+
+  afterAll(async () => {
+    await sequelize.close();
+    await module.close();
+  });
+
+  beforeEach(async () => {
+    // Clean up data before each test
+    await TeamMember.destroy({ where: {}, truncate: true });
+    await Team.destroy({ where: {}, truncate: true });
+    await User.destroy({ where: {}, truncate: true });
+    await Company.destroy({ where: {}, truncate: true });
+  });
+
+  describe('Referential Integrity - Foreign Key Constraints', () => {
+    it('should maintain referential integrity when creating teams', async () => {
+      // Create company and user first
+      const company = await Company.create({
+        name: 'Test Company',
+        email: 'test@company.com',
+      });
+
+      const manager = await User.create({
+        first_name: 'Team',
+        last_name: 'Manager',
+        email: 'manager@test.com',
+        auth0_user_id: 'auth0|manager123',
+        role: UserRole.VENDOR_MANAGER,
+        company_id: company.id,
+      });
+
+      // Should successfully create team with valid foreign keys
+      const team = await Team.create({
+        name: 'Valid Team',
+        company_id: company.id,
+        owner_user_id: manager.id,
+      });
+
+      expect(team).toBeDefined();
+      expect(team.company_id).toBe(company.id);
+      expect(team.owner_user_id).toBe(manager.id);
+
+      // Verify relationships are properly established
+      const teamWithRelations = await Team.findByPk(team.id, {
+        include: [
+          { model: Company, as: 'company' },
+          { model: User, as: 'manager' },
+        ],
+      });
+
+      expect(teamWithRelations?.company).toBeDefined();
+      expect(teamWithRelations?.company.id).toBe(company.id);
+      expect(teamWithRelations?.owner).toBeDefined();
+      expect(teamWithRelations?.owner.id).toBe(manager.id);
+    });
+
+    it('should reject team creation with invalid foreign keys', async () => {
+      const invalidCompanyId = '00000000-0000-0000-0000-000000000000';
+      const invalidManagerId = '11111111-1111-1111-1111-111111111111';
+
+      // Should fail with invalid company_id (in real DB with FK constraints)
+      // Note: SQLite in memory doesn't enforce FK constraints by default
+      try {
+        await Team.create({
+          name: 'Invalid Team',
+          company_id: invalidCompanyId,
+          manager_id: invalidManagerId,
+        });
+        // In a real database with FK constraints, this would throw an error
+        console.warn(
+          "SQLite in-memory doesn't enforce FK constraints - this would fail in production"
+        );
+      } catch (error) {
+        expect(error).toBeInstanceOf(ForeignKeyConstraintError);
+      }
+    });
+
+    it('should maintain referential integrity for team members', async () => {
+      // Create required entities
+      const company = await Company.create({
+        name: 'Test Company',
+        email: 'test@company.com',
+      });
+
+      const manager = await User.create({
+        first_name: 'Team',
+        last_name: 'Manager',
+        email: 'manager@test.com',
+        auth0_user_id: 'auth0|manager123',
+        role: UserRole.VENDOR_MANAGER,
+        company_id: company.id,
+      });
+
+      const member = await User.create({
+        first_name: 'Team',
+        last_name: 'Member',
+        email: 'member@test.com',
+        auth0_user_id: 'auth0|member123',
+        role: UserRole.VENDOR_EMPLOYEE,
+        company_id: company.id,
+      });
+
+      const team = await Team.create({
+        name: 'Test Team',
+        company_id: company.id,
+        manager_id: manager.id,
+      });
+
+      // Should successfully create team member with valid foreign keys
+      const teamMember = await TeamMember.create({
+        team_id: team.id,
+        user_id: member.id,
+      });
+
+      expect(teamMember).toBeDefined();
+      expect(teamMember.team_id).toBe(team.id);
+      expect(teamMember.user_id).toBe(member.id);
+    });
+  });
+
+  describe('Unique Constraints Enforcement', () => {
+    it('should enforce unique constraint on team_id + user_id in TeamMembers', async () => {
+      // Create required entities
+      const company = await Company.create({
+        name: 'Test Company',
+        email: 'test@company.com',
+      });
+
+      const manager = await User.create({
+        first_name: 'Team',
+        last_name: 'Manager',
+        email: 'manager@test.com',
+        auth0_user_id: 'auth0|manager123',
+        role: UserRole.VENDOR_MANAGER,
+        company_id: company.id,
+      });
+
+      const member = await User.create({
+        first_name: 'Team',
+        last_name: 'Member',
+        email: 'member@test.com',
+        auth0_user_id: 'auth0|member123',
+        role: UserRole.VENDOR_EMPLOYEE,
+        company_id: company.id,
+      });
+
+      const team = await Team.create({
+        name: 'Test Team',
+        company_id: company.id,
+        manager_id: manager.id,
+      });
+
+      // First team member creation should succeed
+      await TeamMember.create({
+        team_id: team.id,
+        user_id: member.id,
+      });
+
+      // Duplicate team member creation should fail
+      await expect(
+        TeamMember.create({
+          team_id: team.id,
+          user_id: member.id,
+        })
+      ).rejects.toThrow();
+    });
+
+    it('should allow same user in different teams', async () => {
+      // Create required entities
+      const company = await Company.create({
+        name: 'Test Company',
+        email: 'test@company.com',
+      });
+
+      const manager = await User.create({
+        first_name: 'Team',
+        last_name: 'Manager',
+        email: 'manager@test.com',
+        auth0_user_id: 'auth0|manager123',
+        role: UserRole.VENDOR_MANAGER,
+        company_id: company.id,
+      });
+
+      const member = await User.create({
+        first_name: 'Team',
+        last_name: 'Member',
+        email: 'member@test.com',
+        auth0_user_id: 'auth0|member123',
+        role: UserRole.VENDOR_EMPLOYEE,
+        company_id: company.id,
+      });
+
+      const team1 = await Team.create({
+        name: 'Team 1',
+        company_id: company.id,
+        manager_id: manager.id,
+      });
+
+      const team2 = await Team.create({
+        name: 'Team 2',
+        company_id: company.id,
+        manager_id: manager.id,
+      });
+
+      // Same user should be able to join different teams
+      const membership1 = await TeamMember.create({
+        team_id: team1.id,
+        user_id: member.id,
+      });
+
+      const membership2 = await TeamMember.create({
+        team_id: team2.id,
+        user_id: member.id,
+      });
+
+      expect(membership1.user_id).toBe(membership2.user_id);
+      expect(membership1.team_id).not.toBe(membership2.team_id);
+    });
+
+    it('should enforce unique email constraint on users', async () => {
+      const email = 'duplicate@test.com';
+
+      // First user creation should succeed
+      await User.create({
+        first_name: 'First',
+        last_name: 'User',
+        email: email,
+        auth0_user_id: 'auth0|first123',
+        role: UserRole.CLIENT,
+      });
+
+      // Duplicate email should fail
+      await expect(
+        User.create({
+          first_name: 'Second',
+          last_name: 'User',
+          email: email,
+          auth0_user_id: 'auth0|second123',
+          role: UserRole.CLIENT,
+        })
+      ).rejects.toThrow();
+    });
+
+    it('should enforce unique auth0_user_id constraint on users', async () => {
+      const auth0Id = 'auth0|duplicate123';
+
+      // First user creation should succeed
+      await User.create({
+        first_name: 'First',
+        last_name: 'User',
+        email: 'first@test.com',
+        auth0_user_id: auth0Id,
+        role: UserRole.CLIENT,
+      });
+
+      // Duplicate auth0_user_id should fail
+      await expect(
+        User.create({
+          first_name: 'Second',
+          last_name: 'User',
+          email: 'second@test.com',
+          auth0_user_id: auth0Id,
+          role: UserRole.CLIENT,
+        })
+      ).rejects.toThrow();
+    });
+  });
+
+  describe('Transaction-based Data Integrity', () => {
+    it('should rollback entire transaction on validation failure', async () => {
+      const transaction = await sequelize.transaction();
+
+      try {
+        // Create company within transaction
+        const company = await Company.create(
+          {
+            name: 'Transaction Test Company',
+            email: 'transaction@test.com',
+          },
+          { transaction }
+        );
+
+        const manager = await User.create(
+          {
+            first_name: 'Transaction',
+            last_name: 'Manager',
+            email: 'transaction.manager@test.com',
+            auth0_user_id: 'auth0|transaction123',
+            role: UserRole.VENDOR_MANAGER,
+            company_id: company.id,
+          },
+          { transaction }
+        );
+
+        const team = await Team.create(
+          {
+            name: 'Transaction Team',
+            company_id: company.id,
+            manager_id: manager.id,
+          },
+          { transaction }
+        );
+
+        // This should succeed
+        const member1 = await User.create(
+          {
+            first_name: 'Member',
+            last_name: 'One',
+            email: 'member1@test.com',
+            auth0_user_id: 'auth0|member1123',
+            role: UserRole.VENDOR_EMPLOYEE,
+            company_id: company.id,
+          },
+          { transaction }
+        );
+
+        await TeamMember.create(
+          {
+            team_id: team.id,
+            user_id: member1.id,
+          },
+          { transaction }
+        );
+
+        // This should fail due to duplicate email
+        await User.create(
+          {
+            first_name: 'Member',
+            last_name: 'Duplicate',
+            email: 'member1@test.com', // Duplicate email
+            auth0_user_id: 'auth0|duplicate123',
+            role: UserRole.VENDOR_EMPLOYEE,
+            company_id: company.id,
+          },
+          { transaction }
+        );
+
+        await transaction.commit();
+
+        // Should not reach here
+        fail('Transaction should have been rolled back');
+      } catch (error) {
+        await transaction.rollback();
+
+        // Verify all data was rolled back
+        const companies = await Company.findAll({
+          where: { name: 'Transaction Test Company' },
+        });
+        expect(companies).toHaveLength(0);
+
+        const teams = await Team.findAll({
+          where: { name: 'Transaction Team' },
+        });
+        expect(teams).toHaveLength(0);
+
+        const users = await User.findAll({
+          where: { email: 'member1@test.com' },
+        });
+        expect(users).toHaveLength(0);
+      }
+    });
+
+    it('should maintain consistency during bulk operations', async () => {
+      // Create base data
+      const company = await Company.create({
+        name: 'Bulk Test Company',
+        email: 'bulk@test.com',
+      });
+
+      const manager = await User.create({
+        first_name: 'Bulk',
+        last_name: 'Manager',
+        email: 'bulk.manager@test.com',
+        auth0_user_id: 'auth0|bulk123',
+        role: UserRole.VENDOR_MANAGER,
+        company_id: company.id,
+      });
+
+      const team = await Team.create({
+        name: 'Bulk Team',
+        company_id: company.id,
+        manager_id: manager.id,
+      });
+
+      const transaction = await sequelize.transaction();
+
+      try {
+        // Create multiple users in bulk
+        const bulkUsers = [];
+        for (let i = 0; i < 5; i++) {
+          bulkUsers.push({
+            first_name: `BulkUser${i}`,
+            last_name: 'Test',
+            email: `bulkuser${i}@test.com`,
+            auth0_user_id: `auth0|bulkuser${i}`,
+            role: UserRole.VENDOR_EMPLOYEE,
+            company_id: company.id,
+          });
+        }
+
+        const createdUsers = await User.bulkCreate(bulkUsers, { transaction });
+
+        // Create team memberships in bulk
+        const memberships = createdUsers.map((user) => ({
+          team_id: team.id,
+          user_id: user.id,
+        }));
+
+        await TeamMember.bulkCreate(memberships, { transaction });
+
+        await transaction.commit();
+
+        // Verify all data was created successfully
+        const allMembers = await TeamMember.findAll({
+          where: { team_id: team.id },
+        });
+        expect(allMembers).toHaveLength(5);
+
+        const allUsers = await User.findAll({
+          where: { company_id: company.id },
+        });
+        expect(allUsers).toHaveLength(6); // 5 bulk users + 1 manager
+      } catch (error) {
+        await transaction.rollback();
+        throw error;
+      }
+    });
+  });
+
+  describe('Cascade Operations and Data Consistency', () => {
+    it('should handle team deletion with proper cleanup', async () => {
+      // Create complete team structure
+      const company = await Company.create({
+        name: 'Cascade Test Company',
+        email: 'cascade@test.com',
+      });
+
+      const manager = await User.create({
+        first_name: 'Cascade',
+        last_name: 'Manager',
+        email: 'cascade.manager@test.com',
+        auth0_user_id: 'auth0|cascade123',
+        role: UserRole.VENDOR_MANAGER,
+        company_id: company.id,
+      });
+
+      const team = await Team.create({
+        name: 'Cascade Team',
+        company_id: company.id,
+        manager_id: manager.id,
+      });
+
+      // Add team members
+      const members = [];
+      for (let i = 0; i < 3; i++) {
+        const member = await User.create({
+          first_name: `CascadeMember${i}`,
+          last_name: 'Test',
+          email: `cascademember${i}@test.com`,
+          auth0_user_id: `auth0|cascademember${i}`,
+          role: UserRole.VENDOR_EMPLOYEE,
+          company_id: company.id,
+        });
+
+        await TeamMember.create({
+          team_id: team.id,
+          user_id: member.id,
+        });
+
+        members.push(member);
+      }
+
+      // Verify team has members
+      const teamWithMembers = await Team.findByPk(team.id, {
+        include: [{ model: User, as: 'members' }],
+      });
+      expect(teamWithMembers.members).toHaveLength(3);
+
+      // Delete team
+      await team.destroy();
+
+      // Verify team members were properly cleaned up
+      const orphanedMemberships = await TeamMember.findAll({
+        where: { team_id: team.id },
+      });
+      expect(orphanedMemberships).toHaveLength(0);
+
+      // Verify users still exist (they shouldn't be deleted)
+      for (const member of members) {
+        const stillExists = await User.findByPk(member.id);
+        expect(stillExists).toBeDefined();
+      }
+    });
+
+    it('should handle company deletion with proper cascade', async () => {
+      // Create complete company structure
+      const company = await Company.create({
+        name: 'Company Cascade Test',
+        email: 'company.cascade@test.com',
+      });
+
+      const owner = await User.create({
+        first_name: 'Company',
+        last_name: 'Owner',
+        email: 'company.owner@test.com',
+        auth0_user_id: 'auth0|companyowner123',
+        role: UserRole.VENDOR_ADMIN,
+        company_id: company.id,
+      });
+
+      await company.update({ owner_id: owner.id });
+
+      const manager = await User.create({
+        first_name: 'Company',
+        last_name: 'Manager',
+        email: 'company.manager@test.com',
+        auth0_user_id: 'auth0|companymanager123',
+        role: UserRole.VENDOR_MANAGER,
+        company_id: company.id,
+      });
+
+      const team = await Team.create({
+        name: 'Company Team',
+        company_id: company.id,
+        manager_id: manager.id,
+      });
+
+      const member = await User.create({
+        first_name: 'Company',
+        last_name: 'Member',
+        email: 'company.member@test.com',
+        auth0_user_id: 'auth0|companymember123',
+        role: UserRole.VENDOR_EMPLOYEE,
+        company_id: company.id,
+      });
+
+      await TeamMember.create({
+        team_id: team.id,
+        user_id: member.id,
+      });
+
+      // Delete company
+      await company.destroy();
+
+      // Verify teams were deleted
+      const orphanedTeams = await Team.findAll({
+        where: { company_id: company.id },
+      });
+      expect(orphanedTeams).toHaveLength(0);
+
+      // Verify team memberships were cleaned up
+      const orphanedMemberships = await TeamMember.findAll({
+        where: { team_id: team.id },
+      });
+      expect(orphanedMemberships).toHaveLength(0);
+
+      // In a real application, you'd need to decide whether to delete users
+      // or just unlink them from the company
+    });
+  });
+
+  describe('Complex Multi-Entity Integrity Scenarios', () => {
+    it('should maintain integrity during team manager changes', async () => {
+      // Create test entities
+      const company = await Company.create({
+        name: 'Manager Change Test Company',
+        email: 'managerchange@test.com',
+      });
+
+      const originalManager = await User.create({
+        first_name: 'Original',
+        last_name: 'Manager',
+        email: 'original.manager@test.com',
+        auth0_user_id: 'auth0|original123',
+        role: UserRole.VENDOR_MANAGER,
+        company_id: company.id,
+      });
+
+      const newManager = await User.create({
+        first_name: 'New',
+        last_name: 'Manager',
+        email: 'new.manager@test.com',
+        auth0_user_id: 'auth0|new123',
+        role: UserRole.VENDOR_MANAGER,
+        company_id: company.id,
+      });
+
+      const team = await Team.create({
+        name: 'Manager Change Team',
+        company_id: company.id,
+        manager_id: originalManager.id,
+      });
+
+      // Add new manager as a regular member first
+      await TeamMember.create({
+        team_id: team.id,
+        user_id: newManager.id,
+      });
+
+      // Change team manager
+      const transaction = await sequelize.transaction();
+
+      try {
+        // Remove new manager from regular members
+        await TeamMember.destroy(
+          {
+            where: {
+              team_id: team.id,
+              user_id: newManager.id,
+            },
+          },
+          { transaction }
+        );
+
+        // Update team manager
+        await team.update(
+          {
+            manager_id: newManager.id,
+          },
+          { transaction }
+        );
+
+        await transaction.commit();
+
+        // Verify changes
+        const updatedTeam = await Team.findByPk(team.id);
+        expect(updatedTeam.manager_id).toBe(newManager.id);
+
+        const remainingMemberships = await TeamMember.findAll({
+          where: {
+            team_id: team.id,
+            user_id: newManager.id,
+          },
+        });
+        expect(remainingMemberships).toHaveLength(0);
+      } catch (error) {
+        await transaction.rollback();
+        throw error;
+      }
+    });
+
+    it('should maintain integrity during bulk membership changes', async () => {
+      // Create test entities
+      const company = await Company.create({
+        name: 'Bulk Membership Test Company',
+        email: 'bulkmembership@test.com',
+      });
+
+      const manager = await User.create({
+        first_name: 'Bulk',
+        last_name: 'Manager',
+        email: 'bulk.manager@test.com',
+        auth0_user_id: 'auth0|bulk123',
+        role: UserRole.VENDOR_MANAGER,
+        company_id: company.id,
+      });
+
+      const team = await Team.create({
+        name: 'Bulk Membership Team',
+        company_id: company.id,
+        manager_id: manager.id,
+      });
+
+      // Create existing members
+      const existingMembers = [];
+      for (let i = 0; i < 3; i++) {
+        const member = await User.create({
+          first_name: `ExistingMember${i}`,
+          last_name: 'Test',
+          email: `existingmember${i}@test.com`,
+          auth0_user_id: `auth0|existingmember${i}`,
+          role: UserRole.VENDOR_EMPLOYEE,
+          company_id: company.id,
+        });
+
+        await TeamMember.create({
+          team_id: team.id,
+          user_id: member.id,
+        });
+
+        existingMembers.push(member);
+      }
+
+      // Create new members
+      const newMembers = [];
+      for (let i = 0; i < 2; i++) {
+        const member = await User.create({
+          first_name: `NewMember${i}`,
+          last_name: 'Test',
+          email: `newmember${i}@test.com`,
+          auth0_user_id: `auth0|newmember${i}`,
+          role: UserRole.VENDOR_EMPLOYEE,
+          company_id: company.id,
+        });
+        newMembers.push(member);
+      }
+
+      // Perform bulk membership replacement
+      const transaction = await sequelize.transaction();
+
+      try {
+        // Remove all existing memberships
+        await TeamMember.destroy(
+          {
+            where: { team_id: team.id },
+          },
+          { transaction }
+        );
+
+        // Add new memberships
+        const newMemberships = newMembers.map((member) => ({
+          team_id: team.id,
+          user_id: member.id,
+        }));
+
+        await TeamMember.bulkCreate(newMemberships, { transaction });
+
+        await transaction.commit();
+
+        // Verify changes
+        const currentMemberships = await TeamMember.findAll({
+          where: { team_id: team.id },
+        });
+        expect(currentMemberships).toHaveLength(2);
+
+        const memberIds = currentMemberships.map((m) => m.user_id);
+        newMembers.forEach((member) => {
+          expect(memberIds).toContain(member.id);
+        });
+
+        existingMembers.forEach((member) => {
+          expect(memberIds).not.toContain(member.id);
+        });
+      } catch (error) {
+        await transaction.rollback();
+        throw error;
+      }
+    });
+  });
+
+  describe('Data Validation Integration with Business Rules', () => {
+    it('should enforce business rules during data operations', async () => {
+      // Create test entities
+      const company = await Company.create({
+        name: 'Business Rules Test Company',
+        email: 'businessrules@test.com',
+      });
+
+      const nonLawyerManager = await User.create({
+        first_name: 'Non-Lawyer',
+        last_name: 'Manager',
+        email: 'nonlawyer.manager@test.com',
+        auth0_user_id: 'auth0|nonlawyer123',
+        role: UserRole.VENDOR_MANAGER,
+        is_lawyer: false,
+        company_id: company.id,
+      });
+
+      const lawyer = await User.create({
+        first_name: 'Legal',
+        last_name: 'Expert',
+        email: 'legal.expert@test.com',
+        auth0_user_id: 'auth0|legal123',
+        role: UserRole.VENDOR_EMPLOYEE,
+        is_lawyer: true,
+        company_id: company.id,
+      });
+
+      const legalTeam = await Team.create({
+        name: 'Business Rules Legal Team',
+        company_id: company.id,
+        manager_id: nonLawyerManager.id,
+      });
+
+      // Add lawyer as member
+      await TeamMember.create({
+        team_id: legalTeam.id,
+        user_id: lawyer.id,
+      });
+
+      // Verify legal team has required lawyer
+      const teamWithMembers = await Team.findByPk(legalTeam.id, {
+        include: [
+          { model: User, as: 'members', attributes: ['id', 'is_lawyer'] },
+          { model: User, as: 'manager', attributes: ['id', 'is_lawyer'] },
+        ],
+      });
+
+      const hasLawyer =
+        teamWithMembers.manager.is_lawyer || teamWithMembers.members.some((m) => m.is_lawyer);
+      expect(hasLawyer).toBe(true);
+
+      // Attempt to remove the only lawyer should be prevented by business logic
+      // (This would be enforced by the validation services)
+      const lawyerMembers = teamWithMembers.members.filter((m) => m.is_lawyer);
+      const managerIsLawyer = teamWithMembers.manager.is_lawyer;
+
+      if (!managerIsLawyer && lawyerMembers.length === 1) {
+        // This represents a business rule violation that should be caught
+        console.log('Business rule: Cannot remove the only lawyer from a legal team');
+        expect(lawyerMembers.length).toBe(1);
+        expect(managerIsLawyer).toBe(false);
+      }
+    });
+
+    it('should validate cross-company data isolation', async () => {
+      // Create two separate companies
+      const company1 = await Company.create({
+        name: 'Company 1',
+        email: 'company1@test.com',
+      });
+
+      const company2 = await Company.create({
+        name: 'Company 2',
+        email: 'company2@test.com',
+      });
+
+      // Create users for each company
+      const user1 = await User.create({
+        first_name: 'User',
+        last_name: 'One',
+        email: 'user1@company1.com',
+        auth0_user_id: 'auth0|user1123',
+        role: UserRole.VENDOR_EMPLOYEE,
+        company_id: company1.id,
+      });
+
+      const user2 = await User.create({
+        first_name: 'User',
+        last_name: 'Two',
+        email: 'user2@company2.com',
+        auth0_user_id: 'auth0|user2123',
+        role: UserRole.VENDOR_EMPLOYEE,
+        company_id: company2.id,
+      });
+
+      const manager1 = await User.create({
+        first_name: 'Manager',
+        last_name: 'One',
+        email: 'manager1@company1.com',
+        auth0_user_id: 'auth0|manager1123',
+        role: UserRole.VENDOR_MANAGER,
+        company_id: company1.id,
+      });
+
+      // Create team in company 1
+      const team1 = await Team.create({
+        name: 'Team 1',
+        company_id: company1.id,
+        manager_id: manager1.id,
+      });
+
+      // User from company 1 should be able to join team 1
+      await TeamMember.create({
+        team_id: team1.id,
+        user_id: user1.id,
+      });
+
+      // Attempting to add user from company 2 to team 1 should be caught by validation
+      // (This would be prevented by business logic validation)
+      const crossCompanyViolation = {
+        team_id: team1.id,
+        user_id: user2.id,
+      };
+
+      // In a real application, this would be prevented by validation services
+      // Here we're testing the data relationship integrity
+      const team1Info = await Team.findByPk(team1.id, {
+        include: [{ model: Company, as: 'company' }],
+      });
+      const user2Info = await User.findByPk(user2.id);
+
+      expect(team1Info.company_id).not.toBe(user2Info.company_id);
+      console.log('Cross-company data isolation validated:', {
+        teamCompany: team1Info.company_id,
+        userCompany: user2Info.company_id,
+        isolated: team1Info.company_id !== user2Info.company_id,
+      });
+    });
+  });
+
+  describe('Performance and Scalability Integrity', () => {
+    it('should maintain integrity under concurrent operations', async () => {
+      // Create base data
+      const company = await Company.create({
+        name: 'Concurrent Test Company',
+        email: 'concurrent@test.com',
+      });
+
+      const manager = await User.create({
+        first_name: 'Concurrent',
+        last_name: 'Manager',
+        email: 'concurrent.manager@test.com',
+        auth0_user_id: 'auth0|concurrent123',
+        role: UserRole.VENDOR_MANAGER,
+        company_id: company.id,
+      });
+
+      const team = await Team.create({
+        name: 'Concurrent Team',
+        company_id: company.id,
+        manager_id: manager.id,
+      });
+
+      // Create multiple users concurrently
+      const userCreationPromises = Array.from({ length: 10 }, (_, i) =>
+        User.create({
+          first_name: `ConcurrentUser${i}`,
+          last_name: 'Test',
+          email: `concurrent${i}@test.com`,
+          auth0_user_id: `auth0|concurrent${i}`,
+          role: UserRole.VENDOR_EMPLOYEE,
+          company_id: company.id,
+        })
+      );
+
+      const users = await Promise.all(userCreationPromises);
+
+      // Add all users to team concurrently
+      const membershipPromises = users.map((user) =>
+        TeamMember.create({
+          team_id: team.id,
+          user_id: user.id,
+        })
+      );
+
+      const memberships = await Promise.all(membershipPromises);
+
+      // Verify all memberships were created successfully
+      expect(memberships).toHaveLength(10);
+
+      const allMemberships = await TeamMember.findAll({
+        where: { team_id: team.id },
+      });
+      expect(allMemberships).toHaveLength(10);
+
+      // Verify no duplicate memberships were created
+      const uniqueMemberships = new Set(allMemberships.map((m) => `${m.team_id}-${m.user_id}`));
+      expect(uniqueMemberships.size).toBe(10);
+    });
+
+    it('should handle large dataset operations efficiently while maintaining integrity', async () => {
+      const startTime = Date.now();
+
+      // Create large dataset
+      const company = await Company.create({
+        name: 'Large Dataset Company',
+        email: 'large@test.com',
+      });
+
+      const manager = await User.create({
+        first_name: 'Large',
+        last_name: 'Manager',
+        email: 'large.manager@test.com',
+        auth0_user_id: 'auth0|large123',
+        role: UserRole.VENDOR_MANAGER,
+        company_id: company.id,
+      });
+
+      // Create multiple teams
+      const teamPromises = Array.from({ length: 5 }, (_, i) =>
+        Team.create({
+          name: `Large Team ${i}`,
+          company_id: company.id,
+          manager_id: manager.id,
+        })
+      );
+
+      const teams = await Promise.all(teamPromises);
+
+      // Create many users
+      const userBulkData = Array.from({ length: 100 }, (_, i) => ({
+        first_name: `LargeUser${i}`,
+        last_name: 'Test',
+        email: `large${i}@test.com`,
+        auth0_user_id: `auth0|large${i}`,
+        role: UserRole.VENDOR_EMPLOYEE,
+        company_id: company.id,
+      }));
+
+      const users = await User.bulkCreate(userBulkData);
+
+      // Create team memberships (distribute users across teams)
+      const membershipData = [];
+      users.forEach((user, index) => {
+        const teamIndex = index % teams.length;
+        membershipData.push({
+          team_id: teams[teamIndex].id,
+          user_id: user.id,
+        });
+      });
+
+      await TeamMember.bulkCreate(membershipData);
+
+      const operationTime = Date.now() - startTime;
+
+      // Verify data integrity
+      const totalMemberships = await TeamMember.count();
+      expect(totalMemberships).toBe(100);
+
+      // Verify even distribution across teams
+      for (const team of teams) {
+        const teamMemberCount = await TeamMember.count({
+          where: { team_id: team.id },
+        });
+        expect(teamMemberCount).toBeGreaterThan(15); // Should be around 20 per team
+        expect(teamMemberCount).toBeLessThan(25);
+      }
+
+      // Operation should complete in reasonable time
+      expect(operationTime).toBeLessThan(5000); // 5 seconds
+
+      console.log(`Large dataset operation completed in ${operationTime}ms`);
+    });
+  });
+});

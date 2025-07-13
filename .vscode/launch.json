@@ -1,0 +1,90 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Launch Server (Local)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["start"],
+      "env": {
+        "NODE_ENV": "local"
+      },
+      "skipFiles": ["<node_internals>/**"],
+      "console": "integratedTerminal"
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Test this file",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "${input:testType}", "--", "--testPathPattern=${fileBasename}"],
+      "env": {
+        "NODE_ENV": "test"
+      },
+      "skipFiles": ["<node_internals>/**"],
+      "console": "integratedTerminal"
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Load Testing Framework",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "jest",
+        "--config",
+        "./test/jest-integration.json",
+        "test/performance/load-testing-framework.spec.ts",
+        "--runInBand",
+        "--testTimeout=300000",
+        "--verbose"
+      ],
+      "env": {
+        "NODE_ENV": "test"
+      },
+      "skipFiles": ["<node_internals>/**"],
+      "console": "integratedTerminal"
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Launch Server (Test)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "test"],
+      "env": {
+        "NODE_ENV": "test"
+      },
+      "skipFiles": ["<node_internals>/**"],
+      "console": "integratedTerminal"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "testType",
+      "description": "Select test type",
+      "type": "pickString",
+      "options": [
+        {
+          "label": "Unit Tests (fast)",
+          "value": "test"
+        },
+        {
+          "label": "E2E Tests",
+          "value": "test:e2e"
+        },
+        {
+          "label": "Integration Tests",
+          "value": "test:integration"
+        },
+        {
+          "label": "Security Tests",
+          "value": "test:security"
+        },
+        {
+          "label": "Performance Tests",
+          "value": "test:performance"
+        }
+      ]
+    }
+  ]
+}

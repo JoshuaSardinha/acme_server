@@ -1,0 +1,871 @@
+import { Test, TestingModule } from '@nestjs/testing';
+import { getModelToken } from '@nestjs/sequelize';
+import { ConfigService } from '@nestjs/config';
+import {
+  BadRequestException,
+  NotFoundException,
+  InternalServerErrorException,
+} from '@nestjs/common';
+import { PermissionsController } from './permissions.controller';
+import { PermissionsService } from './permissions.service';
+import { User } from '../auth/entities/user.entity';
+import { Role, Permission, UserRole, UserPermission, RolePermission } from './entities';
+
+describe('PermissionsController', () => {
+  let controller: PermissionsController;
+  let service: PermissionsService;
+
+  // Mock models
+  const mockUserModel = {
+    findByPk: jest.fn(),
+    findAll: jest.fn(),
+    findOne: jest.fn(),
+  };
+
+  const mockRoleModel = {
+    findAll: jest.fn(),
+    findByPk: jest.fn(),
+  };
+
+  const mockPermissionModel = {
+    findAll: jest.fn(),
+    findByPk: jest.fn(),
+  };
+
+  const mockUserRoleModel = {
+    findAll: jest.fn(),
+  };
+
+  const mockUserPermissionModel = {
+    findAll: jest.fn(),
+  };
+
+  const mockRolePermissionModel = {
+    findAll: jest.fn(),
+  };
+
+  const mockConfigService = {
+    get: jest.fn((key: string, defaultValue?: any) => {
+      const config = {
+        PERMISSIONS_CACHE_TTL: 3600,
+        PERMISSIONS_MAX_CACHE_ENTRIES: 10000,
+        PERMISSIONS_CACHE_ENABLED: true,
+        PERMISSIONS_BACKGROUND_REFRESH: 1800,
+        PERMISSIONS_INCLUDE_SYSTEM: true,
+      };
+      return config[key] || defaultValue;
+    }),
+  };
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [PermissionsController],
+      providers: [
+        PermissionsService,
+        {
+          provide: getModelToken(User),
+          useValue: mockUserModel,
+        },
+        {
+          provide: getModelToken(Role),
+          useValue: mockRoleModel,
+        },
+        {
+          provide: getModelToken(Permission),
+          useValue: mockPermissionModel,
+        },
+        {
+          provide: getModelToken(UserRole),
+          useValue: mockUserRoleModel,
+        },
+        {
+          provide: getModelToken(UserPermission),
+          useValue: mockUserPermissionModel,
+        },
+        {
+          provide: getModelToken(RolePermission),
+          useValue: mockRolePermissionModel,
+        },
+        {
+          provide: ConfigService,
+          useValue: mockConfigService,
+        },
+      ],
+    }).compile();
+
+    controller = module.get<PermissionsController>(PermissionsController);
+    service = module.get<PermissionsService>(PermissionsService);
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('should be defined', () => {
+    expect(controller).toBeDefined();
+    expect(service).toBeDefined();
+  });
+
+  describe('getUserPermissions', () => {
+    it('should return user permissions successfully', async () => {
+      const userId = 'test-user-id';
+      const mockServiceResponse = {
+        user_id: userId,
+        company_id: 'test-company-id',
+        permissions: [
+          {
+            name: 'CREATE_PETITION',
+            category: 'PETITION_MANAGEMENT',
+            source: 'ROLE' as any,
+            source_role_id: 'role-id',
+            source_role_name: 'Attorney',
+            is_active: true,
+          },
+        ],
+        permission_names: ['CREATE_PETITION'],
+        calculated_at: new Date(),
+        from_cache: false,
+        cache_ttl_seconds: 3600,
+      };
+
+      // Mock the user model to return a valid user
+      mockUserModel.findByPk.mockResolvedValue({
+        id: userId,
+        company_id: 'test-company-id',
+        email: 'test@example.com',
+      });
+
+      // Mock the permissions service
+      jest.spyOn(service, 'getEffectivePermissionsForUser').mockResolvedValue(mockServiceResponse);
+
+      const result = await controller.getUserPermissions(userId, 'test-company-id', false);
+
+      expect(result).toBeDefined();
+      expect(result.user_id).toBe(userId);
+      expect(result.permissions).toHaveLength(1);
+      expect(result.permissions[0].name).toBe('CREATE_PETITION');
+      expect(service.getEffectivePermissionsForUser).toHaveBeenCalledWith(
+        userId,
+        'test-company-id',
+        false
+      );
+    });
+
+    it('should handle user not found error', async () => {
+      const userId = 'non-existent-user';
+
+      // Mock service to throw NotFoundException
+      jest
+        .spyOn(service, 'getEffectivePermissionsForUser')
+        .mockRejectedValue(new Error('User not found'));
+
+      await expect(controller.getUserPermissions(userId)).rejects.toThrow();
+    });
+  });
+
+  describe('checkUserPermissions', () => {
+    it('should check single permission successfully', async () => {
+      const userId = 'test-user-id';
+      const permissionName = 'CREATE_PETITION';
+
+      const mockServiceResponse = {
+        granted: true,
+        permission_name: permissionName,
+        user_id: userId,
+        source: 'ROLE' as any,
+        source_role_name: 'Attorney',
+        checked_at: new Date(),
+        from_cache: false,
+      };
+
+      jest.spyOn(service, 'hasPermission').mockResolvedValue(mockServiceResponse);
+
+      const checkDto = {
+        user_id: userId,
+        permission_name: permissionName,
+        company_id: 'test-company-id',
+      };
+
+      const result = await controller.checkUserPermissions(userId, checkDto);
+
+      expect(result).toBeDefined();
+      expect('has_permission' in result && result.has_permission).toBe(true);
+      expect('permission_name' in result && result.permission_name).toBe(permissionName);
+      expect(service.hasPermission).toHaveBeenCalledWith({
+        user_id: userId,
+        permission_name: permissionName,
+        company_id: 'test-company-id',
+        force_refresh: false,
+      });
+    });
+
+    it('should check multiple permissions successfully', async () => {
+      const userId = 'test-user-id';
+      const permissionNames = ['CREATE_PETITION', 'VIEW_PETITION'];
+
+      const mockServiceResponse = {
+        user_id: userId,
+        results: [
+          {
+            granted: true,
+            permission_name: 'CREATE_PETITION',
+            user_id: userId,
+            source: 'ROLE' as any,
+            source_role_name: 'Attorney',
+            checked_at: new Date(),
+            from_cache: false,
+          },
+          {
+            granted: false,
+            permission_name: 'VIEW_PETITION',
+            user_id: userId,
+            source: undefined,
+            source_role_name: undefined,
+            checked_at: new Date(),
+            from_cache: false,
+          },
+        ],
+        total_checked: 2,
+        granted_count: 1,
+        checked_at: new Date(),
+        from_cache: false,
+      };
+
+      jest.spyOn(service, 'hasPermissions').mockResolvedValue(mockServiceResponse);
+
+      const checkDto = {
+        permission_names: permissionNames,
+        company_id: 'test-company-id',
+      };
+
+      const result = await controller.checkUserPermissions(userId, checkDto);
+
+      expect(result).toBeDefined();
+      expect('results' in result && result.results).toHaveLength(2);
+      expect(service.hasPermissions).toHaveBeenCalledWith({
+        user_id: userId,
+        permission_names: permissionNames,
+        company_id: 'test-company-id',
+        force_refresh: false,
+      });
+    });
+  });
+
+  describe('Cache Management', () => {
+    it('should invalidate cache successfully', async () => {
+      const invalidateDto = {
+        user_id: 'test-user-id',
+        reason: 'User role changed',
+      };
+
+      const mockResponse = {
+        invalidated_count: 1,
+        invalidated_keys: ['permissions:user_permissions:test-user-id'],
+        invalidated_at: new Date(),
+        reason: 'User role changed',
+      };
+
+      jest.spyOn(service, 'invalidateCache').mockResolvedValue(mockResponse);
+
+      const result = await controller.invalidateCache(invalidateDto);
+
+      expect(result).toBeDefined();
+      expect(result.invalidated_count).toBe(1);
+      expect(service.invalidateCache).toHaveBeenCalledWith(invalidateDto);
+    });
+
+    it('should get cache statistics successfully', async () => {
+      const mockStats = {
+        total_entries: 100,
+        active_entries: 95,
+        expired_entries: 5,
+        total_hits: 1000,
+        total_misses: 50,
+        hit_ratio: 0.95,
+        memory_usage_bytes: 1024000,
+        average_entry_size: 10240,
+        calculated_at: new Date(),
+      };
+
+      jest.spyOn(service, 'getCacheStatistics').mockResolvedValue(mockStats);
+
+      const result = await controller.getCacheStatistics();
+
+      expect(result).toBeDefined();
+      expect(result.total_entries).toBe(100);
+      expect(result.hit_ratio).toBe(0.95);
+      expect(service.getCacheStatistics).toHaveBeenCalled();
+    });
+
+    it('should warm up cache successfully', async () => {
+      const warmupDto = {
+        user_ids: ['user1', 'user2'],
+      };
+
+      const mockResponse = {
+        warmed_count: 2,
+        users_processed: 2,
+        duration_ms: 150,
+        completed_at: new Date(),
+        errors: [],
+      };
+
+      jest.spyOn(service, 'warmupCache').mockResolvedValue(mockResponse);
+
+      const result = await controller.warmupCache(warmupDto);
+
+      expect(result).toBeDefined();
+      expect(result.warmed_count).toBe(2);
+      expect(result.users_processed).toBe(2);
+      expect(service.warmupCache).toHaveBeenCalledWith(warmupDto);
+    });
+  });
+
+  describe('Error Handling', () => {
+    it('should handle service errors gracefully in getUserPermissions', async () => {
+      const userId = 'test-user-id';
+
+      jest
+        .spyOn(service, 'getEffectivePermissionsForUser')
+        .mockRejectedValue(new Error('Database connection failed'));
+
+      await expect(controller.getUserPermissions(userId)).rejects.toThrow();
+    });
+
+    it('should handle NotFoundException in getUserPermissions', async () => {
+      const userId = 'non-existent-user';
+
+      jest
+        .spyOn(service, 'getEffectivePermissionsForUser')
+        .mockRejectedValue(new NotFoundException('User not found'));
+
+      await expect(controller.getUserPermissions(userId)).rejects.toThrow(NotFoundException);
+    });
+
+    it('should handle BadRequestException in getUserPermissions', async () => {
+      const userId = 'test-user-id';
+
+      jest
+        .spyOn(service, 'getEffectivePermissionsForUser')
+        .mockRejectedValue(new BadRequestException('Invalid company ID'));
+
+      await expect(controller.getUserPermissions(userId, 'invalid-company')).rejects.toThrow(
+        BadRequestException
+      );
+    });
+
+    it('should wrap unknown errors in InternalServerErrorException for getUserPermissions', async () => {
+      const userId = 'test-user-id';
+
+      jest
+        .spyOn(service, 'getEffectivePermissionsForUser')
+        .mockRejectedValue(new Error('Unknown error'));
+
+      await expect(controller.getUserPermissions(userId)).rejects.toThrow(
+        InternalServerErrorException
+      );
+    });
+
+    it('should handle invalid permission check requests', async () => {
+      const userId = 'test-user-id';
+      const invalidDto = {}; // Missing required fields
+
+      await expect(controller.checkUserPermissions(userId, invalidDto as any)).rejects.toThrow();
+    });
+
+    it('should handle service errors in permission checks', async () => {
+      const userId = 'test-user-id';
+      const checkDto = {
+        user_id: userId,
+        permission_name: 'CREATE_PETITION',
+        company_id: 'test-company-id',
+      };
+
+      jest.spyOn(service, 'hasPermission').mockRejectedValue(new Error('Database error'));
+
+      await expect(controller.checkUserPermissions(userId, checkDto)).rejects.toThrow(
+        InternalServerErrorException
+      );
+    });
+
+    it('should handle cache invalidation errors', async () => {
+      const invalidateDto = {
+        user_id: 'test-user-id',
+        reason: 'Test error',
+      };
+
+      jest.spyOn(service, 'invalidateCache').mockRejectedValue(new Error('Cache error'));
+
+      await expect(controller.invalidateCache(invalidateDto)).rejects.toThrow(
+        InternalServerErrorException
+      );
+    });
+
+    it('should handle cache statistics errors', async () => {
+      jest.spyOn(service, 'getCacheStatistics').mockRejectedValue(new Error('Stats error'));
+
+      await expect(controller.getCacheStatistics()).rejects.toThrow(InternalServerErrorException);
+    });
+
+    it('should handle cache warmup errors', async () => {
+      const warmupDto = {
+        user_ids: ['user1', 'user2'],
+      };
+
+      jest.spyOn(service, 'warmupCache').mockRejectedValue(new Error('Warmup error'));
+
+      await expect(controller.warmupCache(warmupDto)).rejects.toThrow(InternalServerErrorException);
+    });
+  });
+
+  describe('getUserPermissions - Additional Coverage', () => {
+    it('should handle undefined company_id parameter', async () => {
+      const userId = 'test-user-id';
+      const mockServiceResponse = {
+        user_id: userId,
+        company_id: 'user-company-id',
+        permissions: [],
+        permission_names: [],
+        calculated_at: new Date(),
+        from_cache: false,
+        cache_ttl_seconds: 3600,
+      };
+
+      jest.spyOn(service, 'getEffectivePermissionsForUser').mockResolvedValue(mockServiceResponse);
+
+      const result = await controller.getUserPermissions(userId);
+
+      expect(result).toBeDefined();
+      expect(service.getEffectivePermissionsForUser).toHaveBeenCalledWith(userId, undefined, false);
+    });
+
+    it('should handle force_refresh parameter correctly', async () => {
+      const userId = 'test-user-id';
+      const mockServiceResponse = {
+        user_id: userId,
+        company_id: 'test-company-id',
+        permissions: [],
+        permission_names: [],
+        calculated_at: new Date(),
+        from_cache: false,
+        cache_ttl_seconds: 3600,
+      };
+
+      jest.spyOn(service, 'getEffectivePermissionsForUser').mockResolvedValue(mockServiceResponse);
+
+      await controller.getUserPermissions(userId, 'test-company-id', true);
+
+      expect(service.getEffectivePermissionsForUser).toHaveBeenCalledWith(
+        userId,
+        'test-company-id',
+        true
+      );
+    });
+
+    it('should map service response to API response correctly', async () => {
+      const userId = 'test-user-id';
+      const mockServiceResponse = {
+        user_id: userId,
+        company_id: 'test-company-id',
+        permissions: [
+          {
+            name: 'CREATE_PETITION',
+            category: 'PETITION_MANAGEMENT',
+            source: 'ROLE' as any,
+            source_role_id: 'role-123',
+            source_role_name: 'Attorney',
+            expires_at: new Date('2024-12-31'),
+            is_active: true,
+          },
+        ],
+        permission_names: ['CREATE_PETITION'],
+        calculated_at: new Date(),
+        from_cache: true,
+        cache_ttl_seconds: 3600,
+      };
+
+      jest.spyOn(service, 'getEffectivePermissionsForUser').mockResolvedValue(mockServiceResponse);
+
+      const result = await controller.getUserPermissions(userId);
+
+      expect(result.user_id).toBe(userId);
+      expect(result.permissions).toHaveLength(1);
+      expect(result.permissions[0]).toMatchObject({
+        id: '', // TODO mapped field
+        name: 'CREATE_PETITION',
+        description: undefined, // TODO mapped field
+        category: 'PETITION_MANAGEMENT',
+        source: 'ROLE',
+        source_role_id: 'role-123',
+        source_role_name: 'Attorney',
+        expires_at: expect.any(Date),
+      });
+      expect(result.roles).toEqual([]); // TODO mapped field
+      expect(result.calculated_at).toEqual(mockServiceResponse.calculated_at);
+      expect(result.from_cache).toBe(true);
+    });
+  });
+
+  describe('checkUserPermissions - Edge Cases', () => {
+    it('should handle permission check with no company_id', async () => {
+      const userId = 'test-user-id';
+      const checkDto = {
+        user_id: userId,
+        permission_name: 'CREATE_PETITION',
+      };
+
+      const mockServiceResponse = {
+        granted: false,
+        permission_name: 'CREATE_PETITION',
+        user_id: userId,
+        source: undefined,
+        source_role_name: undefined,
+        checked_at: new Date(),
+        from_cache: false,
+      };
+
+      jest.spyOn(service, 'hasPermission').mockResolvedValue(mockServiceResponse);
+
+      const result = await controller.checkUserPermissions(userId, checkDto);
+
+      expect(result).toBeDefined();
+      expect('has_permission' in result && result.has_permission).toBe(false);
+      expect(service.hasPermission).toHaveBeenCalledWith({
+        user_id: userId,
+        permission_name: 'CREATE_PETITION',
+        company_id: undefined,
+        force_refresh: false,
+      });
+    });
+
+    it('should handle bulk permission check with empty array', async () => {
+      const userId = 'test-user-id';
+      const checkDto = {
+        permission_names: [],
+        company_id: 'test-company-id',
+      };
+
+      const mockServiceResponse = {
+        user_id: userId,
+        results: [],
+        total_checked: 0,
+        granted_count: 0,
+        checked_at: new Date(),
+        from_cache: false,
+      };
+
+      jest.spyOn(service, 'hasPermissions').mockResolvedValue(mockServiceResponse);
+
+      const result = await controller.checkUserPermissions(userId, checkDto);
+
+      expect(result).toBeDefined();
+      expect('results' in result && result.results).toHaveLength(0);
+    });
+
+    it('should handle bulk permission check with mixed results', async () => {
+      const userId = 'test-user-id';
+      const permissionNames = ['PERMISSION_1', 'PERMISSION_2', 'PERMISSION_3'];
+      const checkDto = {
+        permission_names: permissionNames,
+        company_id: 'test-company-id',
+      };
+
+      const mockServiceResponse = {
+        user_id: userId,
+        results: [
+          {
+            granted: true,
+            permission_name: 'PERMISSION_1',
+            user_id: userId,
+            source: 'ROLE' as any,
+            source_role_name: 'Admin',
+            checked_at: new Date(),
+            from_cache: false,
+          },
+          {
+            granted: false,
+            permission_name: 'PERMISSION_2',
+            user_id: userId,
+            source: undefined,
+            source_role_name: undefined,
+            checked_at: new Date(),
+            from_cache: false,
+          },
+          {
+            granted: true,
+            permission_name: 'PERMISSION_3',
+            user_id: userId,
+            source: 'DIRECT' as any,
+            source_role_name: undefined,
+            checked_at: new Date(),
+            from_cache: false,
+          },
+        ],
+        total_checked: 3,
+        granted_count: 2,
+        checked_at: new Date(),
+        from_cache: false,
+      };
+
+      jest.spyOn(service, 'hasPermissions').mockResolvedValue(mockServiceResponse);
+
+      const result = await controller.checkUserPermissions(userId, checkDto);
+
+      expect(result).toBeDefined();
+      expect('results' in result && result.results).toHaveLength(3);
+
+      const results = (result as any).results;
+      expect(results[0].has_permission).toBe(true);
+      expect(results[0].source).toBe('ROLE');
+      expect(results[1].has_permission).toBe(false);
+      expect(results[2].has_permission).toBe(true);
+      expect(results[2].source).toBe('DIRECT');
+    });
+
+    it('should throw BadRequestException for invalid permission check format', async () => {
+      const userId = 'test-user-id';
+      const invalidDto = {
+        invalid_field: 'invalid',
+      };
+
+      await expect(controller.checkUserPermissions(userId, invalidDto as any)).rejects.toThrow(
+        BadRequestException
+      );
+    });
+  });
+
+  describe('Cache Management - Additional Coverage', () => {
+    it('should handle cache invalidation with minimal data', async () => {
+      const invalidateDto = {
+        reason: 'Minimal test',
+      };
+
+      const mockResponse = {
+        invalidated_count: 0,
+        invalidated_keys: [],
+        invalidated_at: new Date(),
+        reason: 'Minimal test',
+      };
+
+      jest.spyOn(service, 'invalidateCache').mockResolvedValue(mockResponse);
+
+      const result = await controller.invalidateCache(invalidateDto);
+
+      expect(result).toBeDefined();
+      expect(result.invalidated_count).toBe(0);
+      expect(result.reason).toBe('Minimal test');
+    });
+
+    it('should handle cache invalidation with all fields', async () => {
+      const invalidateDto = {
+        user_id: 'user-123',
+        company_id: 'company-456',
+        role_id: 'role-789',
+        invalidate_all: true,
+        reason: 'Complete test',
+      };
+
+      const mockResponse = {
+        invalidated_count: 100,
+        invalidated_keys: ['*'],
+        invalidated_at: new Date(),
+        reason: 'Complete test',
+      };
+
+      jest.spyOn(service, 'invalidateCache').mockResolvedValue(mockResponse);
+
+      const result = await controller.invalidateCache(invalidateDto);
+
+      expect(result).toBeDefined();
+      expect(result.invalidated_count).toBe(100);
+      expect(result.invalidated_keys).toContain('*');
+    });
+
+    it('should handle cache warmup with different criteria', async () => {
+      const warmupDto = {
+        company_id: 'company-123',
+        role_id: 'role-456',
+        warmup_all: false,
+      };
+
+      const mockResponse = {
+        warmed_count: 5,
+        users_processed: 10,
+        duration_ms: 500,
+        completed_at: new Date(),
+        errors: ['Error 1', 'Error 2'],
+      };
+
+      jest.spyOn(service, 'warmupCache').mockResolvedValue(mockResponse);
+
+      const result = await controller.warmupCache(warmupDto);
+
+      expect(result).toBeDefined();
+      expect(result.warmed_count).toBe(5);
+      expect(result.users_processed).toBe(10);
+      expect(result.errors).toHaveLength(2);
+    });
+
+    it('should handle BadRequestException from cache operations', async () => {
+      const invalidateDto = {
+        user_id: 'invalid-user',
+      };
+
+      jest
+        .spyOn(service, 'invalidateCache')
+        .mockRejectedValue(new BadRequestException('Invalid user'));
+
+      await expect(controller.invalidateCache(invalidateDto)).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('Unimplemented Endpoints', () => {
+    it('should throw InternalServerErrorException for getPermissions', async () => {
+      const query = { category: 'TEST' };
+
+      await expect(controller.getPermissions(query)).rejects.toThrow(InternalServerErrorException);
+    });
+
+    it('should throw InternalServerErrorException for createPermission', async () => {
+      const createDto = {
+        name: 'TEST_PERMISSION',
+        category: 'TEST',
+        description: 'Test permission',
+      };
+
+      await expect(controller.createPermission(createDto)).rejects.toThrow(
+        InternalServerErrorException
+      );
+    });
+
+    it('should throw InternalServerErrorException for getPermission', async () => {
+      await expect(controller.getPermission('test-id')).rejects.toThrow(
+        InternalServerErrorException
+      );
+    });
+
+    it('should throw InternalServerErrorException for updatePermission', async () => {
+      const updateDto = {
+        description: 'Updated description',
+      };
+
+      await expect(controller.updatePermission('test-id', updateDto)).rejects.toThrow(
+        InternalServerErrorException
+      );
+    });
+
+    it('should throw InternalServerErrorException for deletePermission', async () => {
+      await expect(controller.deletePermission('test-id')).rejects.toThrow(
+        InternalServerErrorException
+      );
+    });
+
+    it('should throw InternalServerErrorException for role management endpoints', async () => {
+      const roleQuery = { company_id: 'test-company' };
+      await expect(controller.getRoles(roleQuery)).rejects.toThrow(InternalServerErrorException);
+
+      const createRoleDto = {
+        name: 'Test Role',
+        company_id: 'test-company',
+      };
+      await expect(controller.createRole(createRoleDto)).rejects.toThrow(
+        InternalServerErrorException
+      );
+
+      await expect(controller.getRole('test-role-id')).rejects.toThrow(
+        InternalServerErrorException
+      );
+
+      const updateRoleDto = {
+        name: 'Updated Role',
+      };
+      await expect(controller.updateRole('test-role-id', updateRoleDto)).rejects.toThrow(
+        InternalServerErrorException
+      );
+
+      await expect(controller.deleteRole('test-role-id')).rejects.toThrow(
+        InternalServerErrorException
+      );
+    });
+
+    it('should throw InternalServerErrorException for user permission management endpoints', async () => {
+      const grantDto = {
+        user_id: 'user-123',
+        permission_id: 'perm-123',
+        expires_at: new Date(),
+      };
+      await expect(controller.grantUserPermission('user-123', grantDto)).rejects.toThrow(
+        InternalServerErrorException
+      );
+
+      await expect(controller.revokeUserPermission('user-123', 'perm-123')).rejects.toThrow(
+        InternalServerErrorException
+      );
+
+      const assignRoleDto = {
+        user_id: 'user-123',
+        role_id: 'role-123',
+      };
+      await expect(controller.assignRoleToUser('user-123', assignRoleDto)).rejects.toThrow(
+        InternalServerErrorException
+      );
+
+      await expect(controller.removeRoleFromUser('user-123', 'role-123')).rejects.toThrow(
+        InternalServerErrorException
+      );
+    });
+
+    it('should throw InternalServerErrorException for role permission management', async () => {
+      const assignPermissionsDto = {
+        permission_ids: ['perm-1', 'perm-2'],
+      };
+      await expect(
+        controller.assignPermissionsToRole('role-123', assignPermissionsDto)
+      ).rejects.toThrow(InternalServerErrorException);
+
+      await expect(controller.removePermissionFromRole('role-123', 'perm-123')).rejects.toThrow(
+        InternalServerErrorException
+      );
+    });
+  });
+
+  describe('Service Integration', () => {
+    it('should correctly pass parameters to service methods', async () => {
+      const userId = 'test-user-id';
+      const companyId = 'test-company-id';
+      const forceRefresh = true;
+
+      const mockServiceResponse = {
+        user_id: userId,
+        company_id: companyId,
+        permissions: [],
+        permission_names: [],
+        calculated_at: new Date(),
+        from_cache: false,
+        cache_ttl_seconds: 3600,
+      };
+
+      const serviceSpy = jest
+        .spyOn(service, 'getEffectivePermissionsForUser')
+        .mockResolvedValue(mockServiceResponse);
+
+      await controller.getUserPermissions(userId, companyId, forceRefresh);
+
+      expect(serviceSpy).toHaveBeenCalledWith(userId, companyId, forceRefresh);
+      expect(serviceSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('should handle service method call failures gracefully', async () => {
+      const checkDto = {
+        user_id: 'user-123',
+        permission_name: 'TEST_PERMISSION',
+      };
+
+      jest.spyOn(service, 'hasPermission').mockRejectedValue(new Error('Service failure'));
+
+      await expect(controller.checkUserPermissions('user-123', checkDto)).rejects.toThrow(
+        InternalServerErrorException
+      );
+    });
+  });
+});

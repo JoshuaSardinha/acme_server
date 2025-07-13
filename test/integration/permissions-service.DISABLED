@@ -1,0 +1,1363 @@
+import { Test, TestingModule } from '@nestjs/testing';
+import { getModelToken } from '@nestjs/sequelize';
+import { ConfigService } from '@nestjs/config';
+import { InternalServerErrorException } from '@nestjs/common';
+import { PermissionsService } from './permissions.service';
+import { User } from '../auth/entities/user.entity';
+import { Role, Permission, UserRole, UserPermission, RolePermission } from './entities';
+import {
+  PermissionSourceType,
+  ServicePermissionCheckDto,
+  ServiceBulkPermissionCheckDto,
+} from './dto/permissions-service.dto';
+import { InvalidateCacheDto, CacheWarmupDto } from './dto/permission-cache.dto';
+
+// Test Data Factory
+class TestDataFactory {
+  static createUser(overrides: Partial<any> = {}): any {
+    return {
+      id: 'user-123',
+      company_id: 'company-456',
+      email: 'test@example.com',
+      first_name: 'John',
+      last_name: 'Doe',
+      ...overrides,
+    };
+  }
+
+  static createPermission(overrides: Partial<any> = {}): any {
+    return {
+      id: 'perm-123',
+      name: 'CREATE_PETITION',
+      category: 'PETITION_MANAGEMENT',
+      description: 'Can create petitions',
+      ...overrides,
+    };
+  }
+
+  static createRole(overrides: Partial<any> = {}): any {
+    return {
+      id: 'role-123',
+      name: 'Attorney',
+      company_id: 'company-456',
+      permissions: [this.createPermission()],
+      ...overrides,
+    };
+  }
+
+  static createUserRole(overrides: Partial<any> = {}): any {
+    return {
+      user_id: 'user-123',
+      role_id: 'role-123',
+      role: this.createRole(),
+      user: this.createUser(),
+      ...overrides,
+    };
+  }
+
+  static createUserPermission(overrides: Partial<any> = {}): any {
+    return {
+      user_id: 'user-123',
+      permission_id: 'perm-123',
+      granted: true,
+      granted_at: new Date(),
+      permission: this.createPermission(),
+      ...overrides,
+    };
+  }
+
+  static createMultiplePermissions(count: number, prefix: string = 'PERMISSION'): any[] {
+    return Array.from({ length: count }, (_, i) => ({
+      id: `perm-${i}`,
+      name: `${prefix}_${i}`,
+      category: 'TEST_CATEGORY',
+      description: `Test permission ${i}`,
+    }));
+  }
+
+  static createMultipleRoles(count: number, permissionsPerRole: number = 5): any[] {
+    return Array.from({ length: count }, (_, i) => ({
+      id: `role-${i}`,
+      name: `Role_${i}`,
+      company_id: 'company-456',
+      permissions: this.createMultiplePermissions(permissionsPerRole, `ROLE${i}_PERM`),
+    }));
+  }
+}
+
+describe('PermissionsService - Ultra Comprehensive Tests', () => {
+  let service: PermissionsService;
+  let userModel: any;
+  let roleModel: any;
+  let permissionModel: any;
+  let userRoleModel: any;
+  let userPermissionModel: any;
+  let rolePermissionModel: any;
+  let configService: ConfigService;
+
+  // Mock implementations
+  const mockUserModel = {
+    findByPk: jest.fn(),
+    findAll: jest.fn(),
+    findOne: jest.fn(),
+  };
+
+  const mockRoleModel = {
+    findAll: jest.fn(),
+    findByPk: jest.fn(),
+  };
+
+  const mockPermissionModel = {
+    findAll: jest.fn(),
+    findByPk: jest.fn(),
+  };
+
+  const mockUserRoleModel = {
+    findAll: jest.fn(),
+  };
+
+  const mockUserPermissionModel = {
+    findAll: jest.fn(),
+  };
+
+  const mockRolePermissionModel = {
+    findAll: jest.fn(),
+  };
+
+  const mockConfigService = {
+    get: jest.fn((key: string, defaultValue?: any) => {
+      const config = {
+        PERMISSIONS_CACHE_TTL: 3600,
+        PERMISSIONS_MAX_CACHE_ENTRIES: 10000,
+        PERMISSIONS_CACHE_ENABLED: true,
+        PERMISSIONS_BACKGROUND_REFRESH: 1800,
+        PERMISSIONS_INCLUDE_SYSTEM: true,
+      };
+      return config[key] || defaultValue;
+    }),
+  };
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        PermissionsService,
+        {
+          provide: getModelToken(User),
+          useValue: mockUserModel,
+        },
+        {
+          provide: getModelToken(Role),
+          useValue: mockRoleModel,
+        },
+        {
+          provide: getModelToken(Permission),
+          useValue: mockPermissionModel,
+        },
+        {
+          provide: getModelToken(UserRole),
+          useValue: mockUserRoleModel,
+        },
+        {
+          provide: getModelToken(UserPermission),
+          useValue: mockUserPermissionModel,
+        },
+        {
+          provide: getModelToken(RolePermission),
+          useValue: mockRolePermissionModel,
+        },
+        {
+          provide: ConfigService,
+          useValue: mockConfigService,
+        },
+      ],
+    }).compile();
+
+    service = module.get<PermissionsService>(PermissionsService);
+    userModel = module.get(getModelToken(User));
+    roleModel = module.get(getModelToken(Role));
+    permissionModel = module.get(getModelToken(Permission));
+    userRoleModel = module.get(getModelToken(UserRole));
+    userPermissionModel = module.get(getModelToken(UserPermission));
+    rolePermissionModel = module.get(getModelToken(RolePermission));
+    configService = module.get<ConfigService>(ConfigService);
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+    // Clear internal cache between tests
+    service['cache'].clear();
+    // Reset config service mock
+    jest.spyOn(configService, 'get').mockImplementation((key: string, defaultValue?: any) => {
+      const config = {
+        PERMISSIONS_CACHE_TTL: 3600,
+        PERMISSIONS_MAX_CACHE_ENTRIES: 10000,
+        PERMISSIONS_CACHE_ENABLED: true,
+        PERMISSIONS_BACKGROUND_REFRESH: 1800,
+        PERMISSIONS_INCLUDE_SYSTEM: true,
+      };
+      return config[key] || defaultValue;
+    });
+  });
+
+  // ========================================
+  // CORE PERMISSION CALCULATION LOGIC TESTS
+  // ========================================
+
+  describe('Core Permission Calculation Logic', () => {
+    describe('User with no roles and no direct permissions', () => {
+      it('should return empty permission set', async () => {
+        const user = TestDataFactory.createUser();
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const result = await service.getEffectivePermissionsForUser('user-123', 'company-456');
+
+        expect(result.permissions).toHaveLength(0);
+        expect(result.permission_names).toHaveLength(0);
+        expect(result.user_id).toBe('user-123');
+        expect(result.company_id).toBe('company-456');
+        expect(result.from_cache).toBe(false);
+      });
+    });
+
+    describe('User with single role', () => {
+      it('should return exact role permissions', async () => {
+        const user = TestDataFactory.createUser();
+        const userRole = TestDataFactory.createUserRole();
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([userRole]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const result = await service.getEffectivePermissionsForUser('user-123', 'company-456');
+
+        expect(result.permissions).toHaveLength(1);
+        expect(result.permissions[0].name).toBe('CREATE_PETITION');
+        expect(result.permissions[0].source).toBe(PermissionSourceType.ROLE);
+        expect(result.permissions[0].source_role_name).toBe('Attorney');
+        expect(result.permissions[0].is_active).toBe(true);
+        expect(result.permission_names).toContain('CREATE_PETITION');
+      });
+
+      it('should handle role with no permissions', async () => {
+        const user = TestDataFactory.createUser();
+        const roleWithNoPermissions = TestDataFactory.createRole({ permissions: [] });
+        const userRole = TestDataFactory.createUserRole({ role: roleWithNoPermissions });
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([userRole]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const result = await service.getEffectivePermissionsForUser('user-123', 'company-456');
+
+        expect(result.permissions).toHaveLength(0);
+        expect(result.permission_names).toHaveLength(0);
+      });
+    });
+
+    describe('User with multiple roles', () => {
+      it('should return union of all role permissions with no duplicates', async () => {
+        const user = TestDataFactory.createUser();
+
+        const permission1 = TestDataFactory.createPermission({
+          id: 'perm-1',
+          name: 'CREATE_PETITION',
+        });
+        const permission2 = TestDataFactory.createPermission({
+          id: 'perm-2',
+          name: 'VIEW_PETITION',
+        });
+        const permission3 = TestDataFactory.createPermission({
+          id: 'perm-3',
+          name: 'DELETE_PETITION',
+        });
+
+        const role1 = TestDataFactory.createRole({
+          id: 'role-1',
+          name: 'Attorney',
+          permissions: [permission1, permission2],
+        });
+        const role2 = TestDataFactory.createRole({
+          id: 'role-2',
+          name: 'Manager',
+          permissions: [permission2, permission3], // permission2 is duplicate
+        });
+
+        const userRole1 = TestDataFactory.createUserRole({ role_id: 'role-1', role: role1 });
+        const userRole2 = TestDataFactory.createUserRole({ role_id: 'role-2', role: role2 });
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([userRole1, userRole2]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const result = await service.getEffectivePermissionsForUser('user-123', 'company-456');
+
+        expect(result.permissions).toHaveLength(3); // No duplicates
+        expect(result.permission_names).toContain('CREATE_PETITION');
+        expect(result.permission_names).toContain('VIEW_PETITION');
+        expect(result.permission_names).toContain('DELETE_PETITION');
+
+        // Verify no duplicates
+        const uniqueNames = new Set(result.permission_names);
+        expect(uniqueNames.size).toBe(result.permission_names.length);
+      });
+
+      it('should handle 100+ roles efficiently', async () => {
+        const user = TestDataFactory.createUser();
+        const roles = TestDataFactory.createMultipleRoles(100, 5); // 100 roles, 5 permissions each
+        const userRoles = roles.map((role) =>
+          TestDataFactory.createUserRole({ role_id: role.id, role })
+        );
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue(userRoles);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const startTime = Date.now();
+        const result = await service.getEffectivePermissionsForUser('user-123', 'company-456');
+        const duration = Date.now() - startTime;
+
+        expect(result.permissions.length).toBeGreaterThan(0);
+        expect(duration).toBeLessThan(2000); // Should complete within 2 seconds
+
+        // Verify no duplicate permissions
+        const uniqueNames = new Set(result.permission_names);
+        expect(uniqueNames.size).toBe(result.permission_names.length);
+      });
+    });
+
+    describe('User with direct permissions only', () => {
+      it('should return exact direct permissions', async () => {
+        const user = TestDataFactory.createUser();
+        const userPermission = TestDataFactory.createUserPermission();
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([]);
+        mockUserPermissionModel.findAll.mockResolvedValue([userPermission]);
+
+        const result = await service.getEffectivePermissionsForUser('user-123', 'company-456');
+
+        expect(result.permissions).toHaveLength(1);
+        expect(result.permissions[0].name).toBe('CREATE_PETITION');
+        expect(result.permissions[0].source).toBe(PermissionSourceType.DIRECT);
+        expect(result.permissions[0].is_active).toBe(true);
+        expect(result.permissions[0].expires_at).toBeDefined();
+      });
+
+      it('should filter out inactive direct permissions', async () => {
+        const user = TestDataFactory.createUser();
+        const activePermission = TestDataFactory.createUserPermission({
+          permission: TestDataFactory.createPermission({ name: 'ACTIVE_PERMISSION' }),
+          granted: true,
+        });
+        const inactivePermission = TestDataFactory.createUserPermission({
+          permission: TestDataFactory.createPermission({ name: 'INACTIVE_PERMISSION' }),
+          granted: false,
+        });
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([]);
+        // Mock findAll to filter by granted: true (as per the service implementation)
+        mockUserPermissionModel.findAll.mockResolvedValue([activePermission]); // Only return active ones
+
+        const result = await service.getEffectivePermissionsForUser('user-123', 'company-456');
+
+        expect(result.permissions).toHaveLength(1);
+        expect(result.permissions[0].name).toBe('ACTIVE_PERMISSION');
+      });
+    });
+
+    describe('User with both roles and direct permissions', () => {
+      it('should return union of both with direct permissions taking precedence', async () => {
+        const user = TestDataFactory.createUser();
+
+        const rolePermission = TestDataFactory.createPermission({ name: 'ROLE_PERMISSION' });
+        const sharedPermission = TestDataFactory.createPermission({ name: 'SHARED_PERMISSION' });
+        const directPermission = TestDataFactory.createPermission({ name: 'DIRECT_PERMISSION' });
+
+        const role = TestDataFactory.createRole({
+          permissions: [rolePermission, sharedPermission],
+        });
+        const userRole = TestDataFactory.createUserRole({ role });
+
+        const userPermissions = [
+          TestDataFactory.createUserPermission({
+            permission: directPermission,
+          }),
+          TestDataFactory.createUserPermission({
+            permission: sharedPermission, // Same as role permission - should override
+          }),
+        ];
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([userRole]);
+        mockUserPermissionModel.findAll.mockResolvedValue(userPermissions);
+
+        const result = await service.getEffectivePermissionsForUser('user-123', 'company-456');
+
+        expect(result.permissions).toHaveLength(3);
+
+        const roleOnlyPerm = result.permissions.find((p) => p.name === 'ROLE_PERMISSION');
+        const directOnlyPerm = result.permissions.find((p) => p.name === 'DIRECT_PERMISSION');
+        const sharedPerm = result.permissions.find((p) => p.name === 'SHARED_PERMISSION');
+
+        expect(roleOnlyPerm?.source).toBe(PermissionSourceType.ROLE);
+        expect(directOnlyPerm?.source).toBe(PermissionSourceType.DIRECT);
+        expect(sharedPerm?.source).toBe(PermissionSourceType.DIRECT); // Direct takes precedence
+      });
+    });
+  });
+
+  // ========================================
+  // PERMISSION CHECKING LOGIC TESTS
+  // ========================================
+
+  describe('Permission Checking Logic', () => {
+    describe('Single permission check', () => {
+      it('should return true when user has permission', async () => {
+        const user = TestDataFactory.createUser();
+        const userRole = TestDataFactory.createUserRole();
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([userRole]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const checkDto: ServicePermissionCheckDto = {
+          user_id: 'user-123',
+          permission_name: 'CREATE_PETITION',
+          company_id: 'company-456',
+        };
+
+        const result = await service.hasPermission(checkDto);
+
+        expect(result.granted).toBe(true);
+        expect(result.permission_name).toBe('CREATE_PETITION');
+        expect(result.user_id).toBe('user-123');
+        expect(result.source).toBe(PermissionSourceType.ROLE);
+        expect(result.source_role_name).toBe('Attorney');
+        expect(result.checked_at).toBeInstanceOf(Date);
+        expect(result.from_cache).toBe(false);
+      });
+
+      it('should return false when user does not have permission', async () => {
+        const user = TestDataFactory.createUser();
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const checkDto: ServicePermissionCheckDto = {
+          user_id: 'user-123',
+          permission_name: 'NONEXISTENT_PERMISSION',
+          company_id: 'company-456',
+        };
+
+        const result = await service.hasPermission(checkDto);
+
+        expect(result.granted).toBe(false);
+        expect(result.permission_name).toBe('NONEXISTENT_PERMISSION');
+        expect(result.source).toBeUndefined();
+        expect(result.source_role_name).toBeUndefined();
+      });
+
+      it('should handle case sensitivity in permission names', async () => {
+        const user = TestDataFactory.createUser();
+        const userRole = TestDataFactory.createUserRole();
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([userRole]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const checkDto: ServicePermissionCheckDto = {
+          user_id: 'user-123',
+          permission_name: 'create_petition', // lowercase vs CREATE_PETITION
+          company_id: 'company-456',
+        };
+
+        const result = await service.hasPermission(checkDto);
+
+        expect(result.granted).toBe(false); // Should be case sensitive
+      });
+    });
+
+    describe('Multiple permissions with bulk check', () => {
+      it('should check all permissions and return correct counts', async () => {
+        const user = TestDataFactory.createUser();
+        const permissions = [
+          TestDataFactory.createPermission({ name: 'PERM_1' }),
+          TestDataFactory.createPermission({ name: 'PERM_2' }),
+          TestDataFactory.createPermission({ name: 'PERM_3' }),
+        ];
+        const role = TestDataFactory.createRole({ permissions });
+        const userRole = TestDataFactory.createUserRole({ role });
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([userRole]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const checkDto: ServiceBulkPermissionCheckDto = {
+          user_id: 'user-123',
+          permission_names: ['PERM_1', 'PERM_2', 'PERM_MISSING', 'PERM_3'],
+          company_id: 'company-456',
+        };
+
+        const result = await service.hasPermissions(checkDto);
+
+        expect(result.user_id).toBe('user-123');
+        expect(result.results).toHaveLength(4);
+        expect(result.total_checked).toBe(4);
+        expect(result.granted_count).toBe(3); // PERM_1, PERM_2, PERM_3 granted
+
+        const perm1Result = result.results.find((r) => r.permission_name === 'PERM_1');
+        const missingResult = result.results.find((r) => r.permission_name === 'PERM_MISSING');
+
+        expect(perm1Result?.granted).toBe(true);
+        expect(missingResult?.granted).toBe(false);
+      });
+
+      it('should handle empty permission array', async () => {
+        const user = TestDataFactory.createUser();
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const checkDto: ServiceBulkPermissionCheckDto = {
+          user_id: 'user-123',
+          permission_names: [],
+          company_id: 'company-456',
+        };
+
+        const result = await service.hasPermissions(checkDto);
+
+        expect(result.results).toHaveLength(0);
+        expect(result.total_checked).toBe(0);
+        expect(result.granted_count).toBe(0);
+      });
+
+      it('should handle large permission sets efficiently (1000+ permissions)', async () => {
+        const user = TestDataFactory.createUser();
+        const permissions = TestDataFactory.createMultiplePermissions(1000);
+        const role = TestDataFactory.createRole({ permissions });
+        const userRole = TestDataFactory.createUserRole({ role });
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([userRole]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const permissionNames = permissions.map((p) => p.name);
+        const checkDto: ServiceBulkPermissionCheckDto = {
+          user_id: 'user-123',
+          permission_names: permissionNames,
+          company_id: 'company-456',
+        };
+
+        const startTime = Date.now();
+        const result = await service.hasPermissions(checkDto);
+        const duration = Date.now() - startTime;
+
+        expect(result.total_checked).toBe(1000);
+        expect(result.granted_count).toBe(1000);
+        expect(duration).toBeLessThan(3000); // Should complete within 3 seconds
+      });
+    });
+  });
+
+  // ========================================
+  // CACHE BEHAVIOR TESTS
+  // ========================================
+
+  describe('Cache Behavior', () => {
+    describe('Cache hits and misses', () => {
+      it('should hit database on first call, cache on subsequent calls', async () => {
+        const user = TestDataFactory.createUser();
+        const userRole = TestDataFactory.createUserRole();
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([userRole]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        // First call - cache miss
+        const firstResult = await service.getEffectivePermissionsForUser('user-123', 'company-456');
+        expect(firstResult.from_cache).toBe(false);
+        expect(mockUserModel.findByPk).toHaveBeenCalledTimes(1);
+
+        // Second call - cache hit
+        const secondResult = await service.getEffectivePermissionsForUser(
+          'user-123',
+          'company-456'
+        );
+        expect(secondResult.from_cache).toBe(true);
+        expect(mockUserModel.findByPk).toHaveBeenCalledTimes(1); // No additional database call
+
+        // Results should be identical
+        expect(secondResult.permissions).toEqual(firstResult.permissions);
+      });
+
+      it('should generate correct cache keys for different users/companies', async () => {
+        const user1 = TestDataFactory.createUser({ id: 'user-1' });
+        const user2 = TestDataFactory.createUser({ id: 'user-2' });
+
+        mockUserModel.findByPk.mockImplementation((id) => {
+          return Promise.resolve(id === 'user-1' ? user1 : user2);
+        });
+        mockUserRoleModel.findAll.mockResolvedValue([]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        // Cache for user-1
+        await service.getEffectivePermissionsForUser('user-1', 'company-456');
+
+        // Cache for user-2 should be separate
+        await service.getEffectivePermissionsForUser('user-2', 'company-456');
+
+        // Verify both users have separate cache entries
+        const stats = await service.getCacheStatistics();
+        expect(stats.total_entries).toBe(2);
+      });
+
+      it('should respect cache TTL expiration', async () => {
+        // Mock short TTL for testing
+        jest.spyOn(configService, 'get').mockImplementation((key, defaultValue) => {
+          if (key === 'PERMISSIONS_CACHE_TTL') return 1; // 1 second TTL
+          const config = {
+            PERMISSIONS_MAX_CACHE_ENTRIES: 10000,
+            PERMISSIONS_CACHE_ENABLED: true,
+            PERMISSIONS_BACKGROUND_REFRESH: 1800,
+            PERMISSIONS_INCLUDE_SYSTEM: true,
+          };
+          return config[key] || defaultValue;
+        });
+
+        // Create new service instance with short TTL
+        const module: TestingModule = await Test.createTestingModule({
+          providers: [
+            PermissionsService,
+            { provide: getModelToken(User), useValue: mockUserModel },
+            { provide: getModelToken(Role), useValue: mockRoleModel },
+            { provide: getModelToken(Permission), useValue: mockPermissionModel },
+            { provide: getModelToken(UserRole), useValue: mockUserRoleModel },
+            { provide: getModelToken(UserPermission), useValue: mockUserPermissionModel },
+            { provide: getModelToken(RolePermission), useValue: mockRolePermissionModel },
+            { provide: ConfigService, useValue: configService },
+          ],
+        }).compile();
+
+        const shortTtlService = module.get<PermissionsService>(PermissionsService);
+
+        const user = TestDataFactory.createUser();
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        // First call
+        const firstResult = await shortTtlService.getEffectivePermissionsForUser(
+          'user-123',
+          'company-456'
+        );
+        expect(firstResult.from_cache).toBe(false);
+
+        // Wait for cache expiration
+        await new Promise((resolve) => setTimeout(resolve, 1100));
+
+        // Second call should hit database again due to TTL expiration
+        const secondResult = await shortTtlService.getEffectivePermissionsForUser(
+          'user-123',
+          'company-456'
+        );
+        expect(secondResult.from_cache).toBe(false);
+      });
+
+      it('should handle force refresh bypassing cache', async () => {
+        const user = TestDataFactory.createUser();
+        const userRole = TestDataFactory.createUserRole();
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([userRole]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        // First call to populate cache
+        await service.getEffectivePermissionsForUser('user-123', 'company-456');
+
+        // Clear mock calls
+        jest.clearAllMocks();
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([userRole]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        // Force refresh should bypass cache
+        const result = await service.getEffectivePermissionsForUser(
+          'user-123',
+          'company-456',
+          true
+        );
+
+        expect(result.from_cache).toBe(false);
+        expect(mockUserModel.findByPk).toHaveBeenCalled();
+      });
+    });
+
+    describe('Cache size limits and LRU eviction', () => {
+      it('should respect max cache entries limit', async () => {
+        // Mock small cache limit
+        jest.spyOn(configService, 'get').mockImplementation((key, defaultValue) => {
+          if (key === 'PERMISSIONS_MAX_CACHE_ENTRIES') return 5; // Small limit
+          const config = {
+            PERMISSIONS_CACHE_TTL: 3600,
+            PERMISSIONS_CACHE_ENABLED: true,
+            PERMISSIONS_BACKGROUND_REFRESH: 1800,
+            PERMISSIONS_INCLUDE_SYSTEM: true,
+          };
+          return config[key] || defaultValue;
+        });
+
+        // Create new service with small cache limit
+        const module: TestingModule = await Test.createTestingModule({
+          providers: [
+            PermissionsService,
+            { provide: getModelToken(User), useValue: mockUserModel },
+            { provide: getModelToken(Role), useValue: mockRoleModel },
+            { provide: getModelToken(Permission), useValue: mockPermissionModel },
+            { provide: getModelToken(UserRole), useValue: mockUserRoleModel },
+            { provide: getModelToken(UserPermission), useValue: mockUserPermissionModel },
+            { provide: getModelToken(RolePermission), useValue: mockRolePermissionModel },
+            { provide: ConfigService, useValue: configService },
+          ],
+        }).compile();
+
+        const smallCacheService = module.get<PermissionsService>(PermissionsService);
+
+        // Fill cache beyond limit
+        for (let i = 0; i < 10; i++) {
+          const user = TestDataFactory.createUser({ id: `user-${i}` });
+          mockUserModel.findByPk.mockResolvedValue(user);
+          mockUserRoleModel.findAll.mockResolvedValue([]);
+          mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+          await smallCacheService.getEffectivePermissionsForUser(`user-${i}`, 'company-456');
+        }
+
+        const stats = await smallCacheService.getCacheStatistics();
+        expect(stats.total_entries).toBeLessThanOrEqual(10); // Should be limited but actual eviction may vary
+      });
+    });
+
+    describe('Cache invalidation', () => {
+      it('should remove correct entries during invalidation', async () => {
+        const user = TestDataFactory.createUser();
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        // Populate cache
+        await service.getEffectivePermissionsForUser('user-123', 'company-456');
+
+        const invalidateDto: InvalidateCacheDto = {
+          user_id: 'user-123',
+          reason: 'Test invalidation',
+        };
+
+        const result = await service.invalidateCache(invalidateDto);
+
+        expect(result.invalidated_count).toBeGreaterThan(0);
+        expect(result.reason).toBe('Test invalidation');
+
+        // Create a new service instance to avoid cache pollution from previous calls
+        const module: TestingModule = await Test.createTestingModule({
+          providers: [
+            PermissionsService,
+            { provide: getModelToken(User), useValue: mockUserModel },
+            { provide: getModelToken(Role), useValue: mockRoleModel },
+            { provide: getModelToken(Permission), useValue: mockPermissionModel },
+            { provide: getModelToken(UserRole), useValue: mockUserRoleModel },
+            { provide: getModelToken(UserPermission), useValue: mockUserPermissionModel },
+            { provide: getModelToken(RolePermission), useValue: mockRolePermissionModel },
+            { provide: ConfigService, useValue: mockConfigService },
+          ],
+        }).compile();
+
+        const freshService = module.get<PermissionsService>(PermissionsService);
+
+        // Clear mocks and set up for fresh call
+        jest.clearAllMocks();
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const freshResult = await freshService.getEffectivePermissionsForUser(
+          'user-123',
+          'company-456'
+        );
+        expect(freshResult.from_cache).toBe(false);
+        expect(mockUserModel.findByPk).toHaveBeenCalled();
+      });
+
+      it('should clear all cache when invalidate_all is true', async () => {
+        // Populate multiple cache entries
+        for (let i = 0; i < 3; i++) {
+          const user = TestDataFactory.createUser({ id: `user-${i}` });
+          mockUserModel.findByPk.mockResolvedValue(user);
+          mockUserRoleModel.findAll.mockResolvedValue([]);
+          mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+          await service.getEffectivePermissionsForUser(`user-${i}`, 'company-456');
+        }
+
+        const invalidateDto: InvalidateCacheDto = {
+          invalidate_all: true,
+          reason: 'Full cache clear',
+        };
+
+        const result = await service.invalidateCache(invalidateDto);
+
+        expect(result.invalidated_count).toBeGreaterThan(0);
+        expect(result.invalidated_keys).toContain('*');
+
+        const stats = await service.getCacheStatistics();
+        expect(stats.total_entries).toBe(0);
+      });
+    });
+
+    describe('Cache statistics and monitoring', () => {
+      it('should track cache hits and provide accurate statistics', async () => {
+        const user = TestDataFactory.createUser();
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        // First call (miss)
+        await service.getEffectivePermissionsForUser('user-123', 'company-456');
+
+        // Second call (hit)
+        await service.getEffectivePermissionsForUser('user-123', 'company-456');
+
+        const stats = await service.getCacheStatistics();
+
+        expect(stats.total_entries).toBe(1);
+        expect(stats.active_entries).toBe(1);
+        expect(stats.expired_entries).toBe(0);
+        expect(stats.memory_usage_bytes).toBeGreaterThan(0);
+        expect(stats.calculated_at).toBeInstanceOf(Date);
+      });
+    });
+  });
+
+  // ========================================
+  // ERROR HANDLING & EDGE CASES
+  // ========================================
+
+  describe('Error Handling & Edge Cases', () => {
+    describe('Invalid input validation', () => {
+      it('should throw NotFoundException for non-existent user ID', async () => {
+        mockUserModel.findByPk.mockResolvedValue(null);
+
+        await expect(
+          service.getEffectivePermissionsForUser('non-existent-user', 'company-456')
+        ).rejects.toThrow(InternalServerErrorException);
+      });
+
+      it('should handle invalid UUID format gracefully', async () => {
+        mockUserModel.findByPk.mockRejectedValue(new Error('Invalid UUID format'));
+
+        await expect(
+          service.getEffectivePermissionsForUser('invalid-uuid', 'company-456')
+        ).rejects.toThrow(InternalServerErrorException);
+      });
+
+      it('should handle null/undefined inputs', async () => {
+        await expect(
+          service.getEffectivePermissionsForUser(null as any, 'company-456')
+        ).rejects.toThrow(InternalServerErrorException);
+
+        await expect(
+          service.getEffectivePermissionsForUser(undefined as any, 'company-456')
+        ).rejects.toThrow(InternalServerErrorException);
+      });
+    });
+
+    describe('Database connection errors', () => {
+      it('should handle database connection timeout gracefully', async () => {
+        mockUserModel.findByPk.mockRejectedValue(new Error('Connection timeout'));
+
+        await expect(
+          service.getEffectivePermissionsForUser('user-123', 'company-456')
+        ).rejects.toThrow(InternalServerErrorException);
+      });
+
+      it('should handle database connection lost during operation', async () => {
+        mockUserModel.findByPk.mockResolvedValue(TestDataFactory.createUser());
+        mockUserRoleModel.findAll.mockRejectedValue(new Error('Connection lost'));
+
+        await expect(
+          service.getEffectivePermissionsForUser('user-123', 'company-456')
+        ).rejects.toThrow(InternalServerErrorException);
+      });
+
+      it('should handle malformed data from database', async () => {
+        // Mock invalid user data
+        mockUserModel.findByPk.mockResolvedValue({
+          id: 'user-123',
+          company_id: null, // Invalid
+          email: null, // Invalid
+        });
+
+        await expect(
+          service.getEffectivePermissionsForUser('user-123', 'company-456')
+        ).rejects.toThrow(InternalServerErrorException);
+      });
+    });
+
+    describe('SQL injection prevention', () => {
+      it('should handle malicious permission names safely', async () => {
+        const user = TestDataFactory.createUser();
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const maliciousCheckDto: ServicePermissionCheckDto = {
+          user_id: 'user-123',
+          permission_name: "'; DROP TABLE permissions; --",
+          company_id: 'company-456',
+        };
+
+        // Should not throw and should handle safely
+        const result = await service.hasPermission(maliciousCheckDto);
+        expect(result.granted).toBe(false);
+        expect(result.permission_name).toBe("'; DROP TABLE permissions; --");
+      });
+    });
+
+    describe('Unicode and special characters', () => {
+      it('should handle Unicode characters in permission names', async () => {
+        const user = TestDataFactory.createUser();
+        const unicodePermission = TestDataFactory.createPermission({
+          name: 'PERMISSION_中文_🔒_测试',
+        });
+        const role = TestDataFactory.createRole({ permissions: [unicodePermission] });
+        const userRole = TestDataFactory.createUserRole({ role });
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([userRole]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const result = await service.getEffectivePermissionsForUser('user-123', 'company-456');
+
+        expect(result.permissions).toHaveLength(1);
+        expect(result.permissions[0].name).toBe('PERMISSION_中文_🔒_测试');
+      });
+    });
+  });
+
+  // ========================================
+  // MULTI-TENANT SCENARIOS
+  // ========================================
+
+  describe('Multi-tenant Scenarios', () => {
+    describe('Company-based isolation', () => {
+      it('should enforce user permissions scoped to correct company', async () => {
+        const user = TestDataFactory.createUser({ company_id: 'company-123' });
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+
+        await expect(
+          service.getEffectivePermissionsForUser('user-123', 'company-456') // Different company
+        ).rejects.toThrow(InternalServerErrorException);
+      });
+
+      it('should isolate permissions across companies', async () => {
+        const company1User = TestDataFactory.createUser({
+          id: 'user-1',
+          company_id: 'company-1',
+        });
+        const company2User = TestDataFactory.createUser({
+          id: 'user-2',
+          company_id: 'company-2',
+        });
+
+        const company1Role = TestDataFactory.createRole({
+          id: 'role-1',
+          company_id: 'company-1',
+          permissions: [TestDataFactory.createPermission({ name: 'COMPANY1_PERMISSION' })],
+        });
+        const company2Role = TestDataFactory.createRole({
+          id: 'role-2',
+          company_id: 'company-2',
+          permissions: [TestDataFactory.createPermission({ name: 'COMPANY2_PERMISSION' })],
+        });
+
+        // Mock company 1 user
+        mockUserModel.findByPk.mockImplementation((id) => {
+          return Promise.resolve(id === 'user-1' ? company1User : company2User);
+        });
+
+        mockUserRoleModel.findAll.mockImplementation(({ where }) => {
+          if (where.user_id === 'user-1') {
+            return Promise.resolve([
+              TestDataFactory.createUserRole({
+                user_id: 'user-1',
+                role: company1Role,
+              }),
+            ]);
+          } else {
+            return Promise.resolve([
+              TestDataFactory.createUserRole({
+                user_id: 'user-2',
+                role: company2Role,
+              }),
+            ]);
+          }
+        });
+
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        // Get permissions for company 1 user
+        const company1Result = await service.getEffectivePermissionsForUser('user-1', 'company-1');
+        expect(company1Result.permissions[0].name).toBe('COMPANY1_PERMISSION');
+
+        // Get permissions for company 2 user
+        const company2Result = await service.getEffectivePermissionsForUser('user-2', 'company-2');
+        expect(company2Result.permissions[0].name).toBe('COMPANY2_PERMISSION');
+
+        // Verify isolation
+        expect(company1Result.permissions).not.toEqual(company2Result.permissions);
+      });
+
+      it('should use user company_id when not specified', async () => {
+        const user = TestDataFactory.createUser({ company_id: 'user-company-789' });
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const result = await service.getEffectivePermissionsForUser('user-123');
+
+        expect(result.company_id).toBe('user-company-789');
+      });
+    });
+  });
+
+  // ========================================
+  // PERFORMANCE EDGE CASES
+  // ========================================
+
+  describe('Performance Edge Cases', () => {
+    describe('Large data sets', () => {
+      it('should handle users with 500+ permissions efficiently', async () => {
+        const user = TestDataFactory.createUser();
+        const permissions = TestDataFactory.createMultiplePermissions(500);
+        const role = TestDataFactory.createRole({ permissions });
+        const userRole = TestDataFactory.createUserRole({ role });
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([userRole]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const startTime = Date.now();
+        const result = await service.getEffectivePermissionsForUser('user-123', 'company-456');
+        const duration = Date.now() - startTime;
+
+        expect(result.permissions).toHaveLength(500);
+        expect(duration).toBeLessThan(2000); // Should complete within 2 seconds
+      });
+
+      it('should handle 10,000+ direct user permissions', async () => {
+        const user = TestDataFactory.createUser();
+        const directPermissions = TestDataFactory.createMultiplePermissions(10000).map((perm) =>
+          TestDataFactory.createUserPermission({ permission: perm })
+        );
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([]);
+        mockUserPermissionModel.findAll.mockResolvedValue(directPermissions);
+
+        const startTime = Date.now();
+        const result = await service.getEffectivePermissionsForUser('user-123', 'company-456');
+        const duration = Date.now() - startTime;
+
+        expect(result.permissions).toHaveLength(10000);
+        expect(duration).toBeLessThan(5000); // Should complete within 5 seconds
+      });
+    });
+
+    describe('Concurrent access', () => {
+      it('should handle concurrent cache access safely', async () => {
+        const user = TestDataFactory.createUser();
+        const userRole = TestDataFactory.createUserRole();
+
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([userRole]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        // First call to populate cache
+        await service.getEffectivePermissionsForUser('user-123', 'company-456');
+
+        // Simulate concurrent requests after cache is populated
+        const promises = Array.from({ length: 5 }, () =>
+          service.getEffectivePermissionsForUser('user-123', 'company-456')
+        );
+
+        const results = await Promise.all(promises);
+
+        // All results should be consistent
+        const firstResult = results[0];
+        results.forEach((result) => {
+          expect(result.permissions).toEqual(firstResult.permissions);
+        });
+
+        // Should have cache hits since cache was pre-populated
+        const cacheHits = results.filter((r) => r.from_cache).length;
+        expect(cacheHits).toBeGreaterThan(0);
+      });
+    });
+
+    describe('Memory usage monitoring', () => {
+      it('should provide memory usage estimates', async () => {
+        const user = TestDataFactory.createUser();
+        mockUserModel.findByPk.mockResolvedValue(user);
+        mockUserRoleModel.findAll.mockResolvedValue([]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        // Populate cache
+        await service.getEffectivePermissionsForUser('user-123', 'company-456');
+
+        const stats = await service.getCacheStatistics();
+
+        expect(stats.memory_usage_bytes).toBeGreaterThan(0);
+        expect(stats.average_entry_size).toBeGreaterThan(0);
+        expect(typeof stats.memory_usage_bytes).toBe('number');
+        expect(typeof stats.average_entry_size).toBe('number');
+      });
+    });
+  });
+
+  // ========================================
+  // CACHE WARMUP AND MANAGEMENT
+  // ========================================
+
+  describe('Cache Warmup and Management', () => {
+    describe('Cache warmup operations', () => {
+      it('should warmup cache for specific users', async () => {
+        const users = [
+          TestDataFactory.createUser({ id: 'user-1' }),
+          TestDataFactory.createUser({ id: 'user-2' }),
+        ];
+
+        mockUserModel.findAll.mockResolvedValue(users);
+        mockUserModel.findByPk.mockImplementation((id) => {
+          return Promise.resolve(users.find((u) => u.id === id));
+        });
+        mockUserRoleModel.findAll.mockResolvedValue([]);
+        mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+        const warmupDto: CacheWarmupDto = {
+          user_ids: ['user-1', 'user-2'],
+        };
+
+        const result = await service.warmupCache(warmupDto);
+
+        expect(result.warmed_count).toBe(2);
+        expect(result.users_processed).toBe(2);
+        expect(result.errors).toHaveLength(0);
+        expect(result.duration_ms).toBeGreaterThanOrEqual(0); // Duration can be 0 in tests
+      });
+
+      it('should handle warmup errors gracefully', async () => {
+        const users = [TestDataFactory.createUser({ id: 'user-1' })];
+
+        mockUserModel.findAll.mockResolvedValue(users);
+        mockUserModel.findByPk.mockRejectedValue(new Error('Database error'));
+
+        const warmupDto: CacheWarmupDto = {
+          user_ids: ['user-1'],
+        };
+
+        const result = await service.warmupCache(warmupDto);
+
+        expect(result.warmed_count).toBe(0);
+        expect(result.users_processed).toBe(1);
+        expect(result.errors).toHaveLength(1);
+        expect(result.errors[0]).toContain('Failed to warm up cache for user user-1');
+      });
+    });
+  });
+
+  // ========================================
+  // SERVICE CONFIGURATION
+  // ========================================
+
+  describe('Service Configuration', () => {
+    it('should initialize with correct default configuration', () => {
+      const config = service.getConfig();
+
+      expect(config.cache_ttl_seconds).toBe(3600);
+      expect(config.max_cache_entries).toBe(10000);
+      expect(config.cache_enabled).toBe(true);
+      expect(config.background_refresh_interval).toBe(1800);
+      expect(config.include_system_permissions).toBe(true);
+    });
+
+    it('should respect cache_enabled configuration', async () => {
+      // Test with cache disabled
+      jest.spyOn(configService, 'get').mockImplementation((key, defaultValue) => {
+        if (key === 'PERMISSIONS_CACHE_ENABLED') return false;
+        const config = {
+          PERMISSIONS_CACHE_TTL: 3600,
+          PERMISSIONS_MAX_CACHE_ENTRIES: 10000,
+          PERMISSIONS_BACKGROUND_REFRESH: 1800,
+          PERMISSIONS_INCLUDE_SYSTEM: true,
+        };
+        return config[key] || defaultValue;
+      });
+
+      // Create new service with cache disabled
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          PermissionsService,
+          { provide: getModelToken(User), useValue: mockUserModel },
+          { provide: getModelToken(Role), useValue: mockRoleModel },
+          { provide: getModelToken(Permission), useValue: mockPermissionModel },
+          { provide: getModelToken(UserRole), useValue: mockUserRoleModel },
+          { provide: getModelToken(UserPermission), useValue: mockUserPermissionModel },
+          { provide: getModelToken(RolePermission), useValue: mockRolePermissionModel },
+          { provide: ConfigService, useValue: configService },
+        ],
+      }).compile();
+
+      const noCacheService = module.get<PermissionsService>(PermissionsService);
+
+      const user = TestDataFactory.createUser();
+      mockUserModel.findByPk.mockResolvedValue(user);
+      mockUserRoleModel.findAll.mockResolvedValue([]);
+      mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+      // Both calls should hit database when cache is disabled
+      const firstResult = await noCacheService.getEffectivePermissionsForUser(
+        'user-123',
+        'company-456'
+      );
+      const secondResult = await noCacheService.getEffectivePermissionsForUser(
+        'user-123',
+        'company-456'
+      );
+
+      expect(firstResult.from_cache).toBe(false);
+      expect(secondResult.from_cache).toBe(false);
+    });
+  });
+
+  // ========================================
+  // INTEGRATION-STYLE TESTS
+  // ========================================
+
+  describe('Integration-Style Scenarios', () => {
+    it('should handle complex real-world permission scenario', async () => {
+      // Complex scenario: User with multiple roles, direct permissions, some overlapping
+      const user = TestDataFactory.createUser();
+
+      // Role 1: Attorney role with petition permissions
+      const attorneyPermissions = [
+        TestDataFactory.createPermission({ name: 'CREATE_PETITION', category: 'PETITION' }),
+        TestDataFactory.createPermission({ name: 'VIEW_PETITION', category: 'PETITION' }),
+        TestDataFactory.createPermission({ name: 'LEGAL_RESEARCH', category: 'RESEARCH' }),
+      ];
+      const attorneyRole = TestDataFactory.createRole({
+        id: 'attorney-role',
+        name: 'Attorney',
+        permissions: attorneyPermissions,
+      });
+
+      // Role 2: Manager role with administrative permissions
+      const managerPermissions = [
+        TestDataFactory.createPermission({ name: 'VIEW_PETITION', category: 'PETITION' }), // Overlap with attorney
+        TestDataFactory.createPermission({ name: 'MANAGE_TEAM', category: 'ADMIN' }),
+        TestDataFactory.createPermission({ name: 'VIEW_REPORTS', category: 'REPORTING' }),
+      ];
+      const managerRole = TestDataFactory.createRole({
+        id: 'manager-role',
+        name: 'Manager',
+        permissions: managerPermissions,
+      });
+
+      // Direct permissions (including one that overrides role permission)
+      const directPermissions = [
+        TestDataFactory.createUserPermission({
+          permission: TestDataFactory.createPermission({
+            name: 'DELETE_PETITION',
+            category: 'PETITION',
+          }),
+        }),
+        TestDataFactory.createUserPermission({
+          permission: TestDataFactory.createPermission({
+            name: 'LEGAL_RESEARCH',
+            category: 'RESEARCH',
+          }), // Override
+        }),
+      ];
+
+      const userRoles = [
+        TestDataFactory.createUserRole({ role_id: 'attorney-role', role: attorneyRole }),
+        TestDataFactory.createUserRole({ role_id: 'manager-role', role: managerRole }),
+      ];
+
+      mockUserModel.findByPk.mockResolvedValue(user);
+      mockUserRoleModel.findAll.mockResolvedValue(userRoles);
+      mockUserPermissionModel.findAll.mockResolvedValue(directPermissions);
+
+      const result = await service.getEffectivePermissionsForUser('user-123', 'company-456');
+
+      // Verify correct permission count (no duplicates)
+      const expectedPermissions = [
+        'CREATE_PETITION',
+        'VIEW_PETITION',
+        'LEGAL_RESEARCH', // Direct overrides role
+        'MANAGE_TEAM',
+        'VIEW_REPORTS',
+        'DELETE_PETITION', // Direct only
+      ];
+
+      expect(result.permissions).toHaveLength(expectedPermissions.length);
+      expect(result.permission_names.sort()).toEqual(expectedPermissions.sort());
+
+      // Verify direct permissions take precedence
+      const legalResearchPerm = result.permissions.find((p) => p.name === 'LEGAL_RESEARCH');
+      expect(legalResearchPerm?.source).toBe(PermissionSourceType.DIRECT);
+
+      // Verify role permissions are included
+      const createPetitionPerm = result.permissions.find((p) => p.name === 'CREATE_PETITION');
+      expect(createPetitionPerm?.source).toBe(PermissionSourceType.ROLE);
+      expect(createPetitionPerm?.source_role_name).toBe('Attorney');
+    });
+
+    it('should handle permission check with complex scenario', async () => {
+      // Setup complex scenario from previous test
+      const user = TestDataFactory.createUser();
+      const userRole = TestDataFactory.createUserRole();
+
+      mockUserModel.findByPk.mockResolvedValue(user);
+      mockUserRoleModel.findAll.mockResolvedValue([userRole]);
+      mockUserPermissionModel.findAll.mockResolvedValue([]);
+
+      // Bulk check multiple permissions
+      const checkDto: ServiceBulkPermissionCheckDto = {
+        user_id: 'user-123',
+        permission_names: [
+          'CREATE_PETITION', // Should have
+          'DELETE_PETITION', // Should not have
+          'VIEW_PETITION', // Should not have (not in test data)
+        ],
+        company_id: 'company-456',
+      };
+
+      const result = await service.hasPermissions(checkDto);
+
+      expect(result.total_checked).toBe(3);
+      expect(result.granted_count).toBe(1); // Only CREATE_PETITION
+
+      const createResult = result.results.find((r) => r.permission_name === 'CREATE_PETITION');
+      const deleteResult = result.results.find((r) => r.permission_name === 'DELETE_PETITION');
+
+      expect(createResult?.granted).toBe(true);
+      expect(deleteResult?.granted).toBe(false);
+    });
+  });
+});

@@ -1,0 +1,889 @@
+import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { getConnectionToken } from '@nestjs/sequelize';
+import { Test, TestingModule } from '@nestjs/testing';
+import { QueryTypes } from 'sequelize';
+import { Sequelize } from 'sequelize-typescript';
+
+// Core modules and guards
+import { AppModule } from '../../src/app.module';
+import { ClientVersionGuard } from '../../src/core/guards/client-version.guard';
+import { JwtAuthGuard } from '../../src/core/guards/jwt-auth.guard';
+
+// Test utilities
+import { MockJwtAuthGuard } from '../auth/mock-jwt-auth.guard';
+import { createTestCompany } from '../factories/company.factory';
+import { ensureNationalNinerCompanyExists } from '../factories/national-niner-company.factory';
+import { createStandardRoles } from '../factories/role.factory';
+import { createTestUser } from '../factories/user.factory';
+import { DbCleanerService } from '../utils/db-cleaner.service';
+
+// Entities
+
+declare global {
+  var perfTestData: {
+    companies: any[];
+    users: any[];
+  };
+}
+
+interface PerformanceMetric {
+  name: string;
+  executionTime: number;
+  threshold: number;
+  status: 'PASS' | 'FAIL' | 'WARN';
+  details?: unknown;
+}
+
+interface QueryPlan {
+  id: number;
+  select_type: string;
+  table: string;
+  partitions?: string;
+  type: string;
+  possible_keys?: string;
+  key?: string;
+  key_len?: string;
+  ref?: string;
+  rows: number;
+  filtered?: number;
+  Extra?: string;
+}
+
+/**
+ * Performance Benchmark Suite for Task 2.1 Database Schema
+ *
+ * This comprehensive test suite validates:
+ * - Index effectiveness and query optimization
+ * - Performance thresholds for common operations
+ * - Query execution plan analysis
+ * - Concurrent operation performance
+ * - Large dataset handling
+ * - Performance regression detection
+ */
+describe('Performance Benchmark Suite - Task 2.1 Database Optimization', () => {
+  let app: INestApplication;
+  let sequelize: Sequelize;
+  let module: TestingModule;
+  let dbCleaner: DbCleanerService;
+  let performanceMetrics: PerformanceMetric[] = [];
+
+  // Performance thresholds (in milliseconds)
+  const PERFORMANCE_THRESHOLDS = {
+    SINGLE_RECORD_LOOKUP: 10,
+    FOREIGN_KEY_LOOKUP: 20,
+    SIMPLE_JOIN: 50,
+    COMPLEX_JOIN: 100,
+    AGGREGATE_QUERY: 150,
+    BULK_INSERT: 200,
+    CONCURRENT_QUERIES: 100,
+    LARGE_DATASET_QUERY: 500,
+  };
+
+  beforeAll(async () => {
+    const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [AppModule],
+    })
+      .overrideGuard(JwtAuthGuard)
+      .useClass(MockJwtAuthGuard)
+      .overrideGuard(ClientVersionGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
+
+    app = moduleFixture.createNestApplication();
+
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      })
+    );
+
+    await app.init();
+
+    sequelize = app.get<Sequelize>(getConnectionToken());
+    dbCleaner = new DbCleanerService(sequelize);
+    module = moduleFixture;
+
+    // Initialize performance test data will be done in beforeEach
+    // to ensure clean state for each test
+  });
+
+  beforeEach(async () => {
+    // Clean database before each test
+    await dbCleaner.cleanAll();
+    performanceMetrics = [];
+
+    // Create standard roles first
+    await createStandardRoles();
+
+    // Ensure National Niner company exists
+    await ensureNationalNinerCompanyExists();
+  });
+
+  afterEach(() => {
+    // Log performance metrics after each test
+    if (performanceMetrics.length > 0) {
+      console.log('\n=== Performance Metrics ===');
+      performanceMetrics.forEach((metric) => {
+        const status = metric.status === 'PASS' ? '✅' : metric.status === 'WARN' ? '⚠️' : '❌';
+        console.log(
+          `${status} ${metric.name}: ${metric.executionTime}ms (threshold: ${metric.threshold}ms)`
+        );
+        if (metric.details) {
+          console.log(`   Details:`, metric.details);
+        }
+      });
+    }
+  });
+
+  afterAll(async () => {
+    // Final cleanup handled by dbCleaner
+    await dbCleaner.cleanAll();
+    await app.close();
+  });
+
+  describe('Index Effectiveness Testing', () => {
+    beforeEach(async () => {
+      await initializePerformanceTestData();
+    });
+
+    it('should verify primary key index performance', async () => {
+      const perfData = global.perfTestData;
+      const testCases = [
+        { table: 'Companies', id: perfData.companies[0].id },
+        { table: 'Users', id: perfData.users[0].id },
+      ];
+
+      for (const testCase of testCases) {
+        const startTime = Date.now();
+
+        const result = await sequelize.query(`SELECT * FROM ${testCase.table} WHERE id = ?`, {
+          replacements: [testCase.id],
+          type: QueryTypes.SELECT,
+        });
+
+        const executionTime = Date.now() - startTime;
+
+        // Verify query plan uses primary key index
+        const explain = (await sequelize.query(
+          `EXPLAIN SELECT * FROM ${testCase.table} WHERE id = ?`,
+          {
+            replacements: [testCase.id],
+            type: QueryTypes.SELECT,
+          }
+        )) as QueryPlan[];
+
+        const metric: PerformanceMetric = {
+          name: `Primary Key Lookup - ${testCase.table}`,
+          executionTime,
+          threshold: PERFORMANCE_THRESHOLDS.SINGLE_RECORD_LOOKUP,
+          status: executionTime <= PERFORMANCE_THRESHOLDS.SINGLE_RECORD_LOOKUP ? 'PASS' : 'FAIL',
+          details: {
+            queryPlan: explain[0],
+            resultCount: result.length,
+            usedIndex: explain[0]?.key === 'PRIMARY',
+          },
+        };
+
+        performanceMetrics.push(metric);
+
+        expect(executionTime).toBeLessThan(PERFORMANCE_THRESHOLDS.SINGLE_RECORD_LOOKUP);
+        expect(explain[0].key).toBe('PRIMARY');
+        expect(explain[0].type).toBe('const');
+      }
+    });
+
+    it('should verify foreign key index performance', async () => {
+      const perfData = global.perfTestData;
+      const foreignKeyTests = [
+        { table: 'Users', column: 'company_id', value: perfData.companies[0].id },
+        { table: 'Companies', column: 'owner_id', value: perfData.users[0].id },
+      ];
+
+      for (const test of foreignKeyTests) {
+        const startTime = Date.now();
+
+        const result = await sequelize.query(
+          `SELECT * FROM ${test.table} WHERE ${test.column} = ?`,
+          {
+            replacements: [test.value],
+            type: QueryTypes.SELECT,
+          }
+        );
+
+        const executionTime = Date.now() - startTime;
+
+        // Verify query plan uses foreign key index
+        const explain = (await sequelize.query(
+          `EXPLAIN SELECT * FROM ${test.table} WHERE ${test.column} = ?`,
+          {
+            replacements: [test.value],
+            type: QueryTypes.SELECT,
+          }
+        )) as QueryPlan[];
+
+        const metric: PerformanceMetric = {
+          name: `Foreign Key Lookup - ${test.table}.${test.column}`,
+          executionTime,
+          threshold: PERFORMANCE_THRESHOLDS.FOREIGN_KEY_LOOKUP,
+          status: executionTime <= PERFORMANCE_THRESHOLDS.FOREIGN_KEY_LOOKUP ? 'PASS' : 'FAIL',
+          details: {
+            queryPlan: explain[0],
+            resultCount: result.length,
+            usedIndex: !!explain[0]?.key,
+            indexName: explain[0]?.key,
+          },
+        };
+
+        performanceMetrics.push(metric);
+
+        expect(executionTime).toBeLessThan(PERFORMANCE_THRESHOLDS.FOREIGN_KEY_LOOKUP);
+        expect(explain[0].key).toBeTruthy(); // Should use an index
+        expect(['ref', 'eq_ref', 'const']).toContain(explain[0].type);
+      }
+    });
+
+    it('should verify composite unique index performance', async () => {
+      const perfData = global.perfTestData;
+      const startTime = Date.now();
+
+      const result = await sequelize.query(
+        `SELECT * FROM Users WHERE company_id = ? AND email = ?`,
+        {
+          replacements: [perfData.companies[0].id, perfData.users[0].email],
+          type: QueryTypes.SELECT,
+        }
+      );
+
+      const executionTime = Date.now() - startTime;
+
+      const explain = (await sequelize.query(
+        `EXPLAIN SELECT * FROM Users WHERE company_id = ? AND email = ?`,
+        {
+          replacements: [perfData.companies[0].id, perfData.users[0].email],
+          type: QueryTypes.SELECT,
+        }
+      )) as QueryPlan[];
+
+      const metric: PerformanceMetric = {
+        name: 'Composite Index Lookup - Users',
+        executionTime,
+        threshold: PERFORMANCE_THRESHOLDS.SINGLE_RECORD_LOOKUP,
+        status: executionTime <= PERFORMANCE_THRESHOLDS.SINGLE_RECORD_LOOKUP ? 'PASS' : 'FAIL',
+        details: {
+          queryPlan: explain[0],
+          resultCount: result.length,
+          usedIndex: !!explain[0]?.key,
+          indexType: explain[0]?.type,
+        },
+      };
+
+      performanceMetrics.push(metric);
+
+      expect(executionTime).toBeLessThan(PERFORMANCE_THRESHOLDS.SINGLE_RECORD_LOOKUP);
+      expect(explain[0].key).toBeTruthy();
+      expect(['const', 'eq_ref', 'ref']).toContain(explain[0].type);
+    });
+
+    it('should analyze index usage patterns with EXPLAIN', async () => {
+      const perfData = global.perfTestData;
+      const queries = [
+        {
+          name: 'Users by Company',
+          sql: 'SELECT * FROM Users WHERE company_id = ?',
+          params: [perfData.companies[0].id],
+        },
+        {
+          name: 'Companies by Owner',
+          sql: 'SELECT * FROM Companies WHERE owner_id = ?',
+          params: [perfData.users[0].id],
+        },
+      ];
+
+      for (const query of queries) {
+        const explain = (await sequelize.query(`EXPLAIN FORMAT=JSON ${query.sql}`, {
+          replacements: query.params,
+          type: QueryTypes.SELECT,
+        })) as any[];
+
+        const queryPlan = JSON.parse(explain[0]['EXPLAIN']);
+
+        console.log(`\n=== Query Plan Analysis: ${query.name} ===`);
+        console.log(JSON.stringify(queryPlan, null, 2));
+
+        // Verify efficient access methods
+        const accessMethod = queryPlan.query_block?.table?.access_type;
+        expect(['const', 'eq_ref', 'ref']).toContain(accessMethod);
+      }
+    });
+  });
+
+  describe('Query Performance Benchmarks', () => {
+    beforeEach(async () => {
+      await initializePerformanceTestData();
+    });
+
+    it('should benchmark simple JOIN operations', async () => {
+      const perfData = global.perfTestData;
+      const joinQueries = [
+        {
+          name: 'Users with Company Info',
+          sql: `
+            SELECT u.id, u.first_name, u.last_name, c.name as company_name
+            FROM Users u
+            JOIN Companies c ON u.company_id = c.id
+            WHERE c.id = ?
+          `,
+          params: [perfData.companies[0].id],
+        },
+        {
+          name: 'User Roles with User Info',
+          sql: `
+            SELECT ur.id, u.first_name, u.last_name, r.name as role_name
+            FROM UserRoles ur
+            JOIN Users u ON ur.user_id = u.id
+            JOIN Roles r ON ur.role_id = r.id
+            WHERE u.id = ?
+          `,
+          params: [perfData.users[0].id],
+        },
+      ];
+
+      for (const query of joinQueries) {
+        const startTime = Date.now();
+
+        const result = await sequelize.query(query.sql, {
+          replacements: query.params,
+          type: QueryTypes.SELECT,
+        });
+
+        const executionTime = Date.now() - startTime;
+
+        const metric: PerformanceMetric = {
+          name: `JOIN Query - ${query.name}`,
+          executionTime,
+          threshold: PERFORMANCE_THRESHOLDS.SIMPLE_JOIN,
+          status: executionTime <= PERFORMANCE_THRESHOLDS.SIMPLE_JOIN ? 'PASS' : 'FAIL',
+          details: {
+            resultCount: result.length,
+          },
+        };
+
+        performanceMetrics.push(metric);
+
+        expect(executionTime).toBeLessThan(PERFORMANCE_THRESHOLDS.SIMPLE_JOIN);
+      }
+    });
+
+    it('should benchmark complex JOIN operations', async () => {
+      const complexQuery = `
+        SELECT 
+          c.name as company_name,
+          c.email as company_email,
+          u.first_name,
+          u.last_name,
+          u.email as user_email,
+          COUNT(ur.id) as user_roles_count,
+          AVG(CASE WHEN ur.created_at > DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1 ELSE 0 END) as recent_role_assignments
+        FROM Companies c
+        JOIN Users u ON c.id = u.company_id
+        LEFT JOIN UserRoles ur ON u.id = ur.user_id
+        WHERE c.owner_id IS NOT NULL
+        GROUP BY c.id, u.id
+        HAVING user_roles_count >= 0
+        ORDER BY c.name, u.first_name
+      `;
+
+      const startTime = Date.now();
+
+      const result = await sequelize.query(complexQuery, {
+        type: QueryTypes.SELECT,
+      });
+
+      const executionTime = Date.now() - startTime;
+
+      // Analyze query plan
+      const explain = (await sequelize.query(`EXPLAIN ${complexQuery}`, {
+        type: QueryTypes.SELECT,
+      })) as QueryPlan[];
+
+      const metric: PerformanceMetric = {
+        name: 'Complex JOIN with Aggregation',
+        executionTime,
+        threshold: PERFORMANCE_THRESHOLDS.COMPLEX_JOIN,
+        status: executionTime <= PERFORMANCE_THRESHOLDS.COMPLEX_JOIN ? 'PASS' : 'FAIL',
+        details: {
+          resultCount: result.length,
+          queryPlan: explain,
+          hasFullTableScan: explain.some((step) => step.type === 'ALL'),
+        },
+      };
+
+      performanceMetrics.push(metric);
+
+      expect(executionTime).toBeLessThan(PERFORMANCE_THRESHOLDS.COMPLEX_JOIN);
+
+      // Verify no full table scans on main tables
+      const fullTableScans = explain.filter(
+        (step) => step.type === 'ALL' && ['Companies', 'Users', 'UserRoles'].includes(step.table)
+      );
+      expect(fullTableScans.length).toBe(0);
+    });
+
+    it('should benchmark aggregate queries', async () => {
+      const aggregateQueries = [
+        {
+          name: 'Company User Counts',
+          sql: `
+            SELECT 
+              c.name,
+              COUNT(u.id) as user_count,
+              COUNT(DISTINCT ur.role_id) as unique_roles
+            FROM Companies c
+            LEFT JOIN Users u ON c.id = u.company_id
+            LEFT JOIN UserRoles ur ON u.id = ur.user_id
+            GROUP BY c.id, c.name
+            ORDER BY user_count DESC
+          `,
+        },
+        {
+          name: 'User Role Distribution',
+          sql: `
+            SELECT 
+              u.first_name,
+              u.last_name,
+              COUNT(ur.role_id) as role_count,
+              CASE 
+                WHEN COUNT(ur.role_id) = 0 THEN 'No Roles'
+                WHEN COUNT(ur.role_id) <= 2 THEN 'Few Roles'
+                WHEN COUNT(ur.role_id) <= 5 THEN 'Many Roles'
+                ELSE 'Admin Level'
+              END as role_category
+            FROM Users u
+            LEFT JOIN UserRoles ur ON u.id = ur.user_id
+            GROUP BY u.id, u.first_name, u.last_name
+            ORDER BY role_count DESC
+          `,
+        },
+      ];
+
+      for (const query of aggregateQueries) {
+        const startTime = Date.now();
+
+        const result = await sequelize.query(query.sql, {
+          type: QueryTypes.SELECT,
+        });
+
+        const executionTime = Date.now() - startTime;
+
+        const metric: PerformanceMetric = {
+          name: `Aggregate Query - ${query.name}`,
+          executionTime,
+          threshold: PERFORMANCE_THRESHOLDS.AGGREGATE_QUERY,
+          status: executionTime <= PERFORMANCE_THRESHOLDS.AGGREGATE_QUERY ? 'PASS' : 'FAIL',
+          details: {
+            resultCount: result.length,
+          },
+        };
+
+        performanceMetrics.push(metric);
+
+        expect(executionTime).toBeLessThan(PERFORMANCE_THRESHOLDS.AGGREGATE_QUERY);
+      }
+    });
+  });
+
+  describe('Concurrent Operation Performance', () => {
+    beforeEach(async () => {
+      await initializePerformanceTestData();
+    });
+
+    it('should handle concurrent read operations efficiently', async () => {
+      const perfData = global.perfTestData;
+      const concurrentQueries = Array(10)
+        .fill(null)
+        .map((_, index) => ({
+          query: 'SELECT * FROM Users WHERE company_id = ?',
+          params: [perfData.companies[0].id],
+        }));
+
+      const startTime = Date.now();
+
+      const promises = concurrentQueries.map(({ query, params }) =>
+        sequelize.query(query, {
+          replacements: params,
+          type: QueryTypes.SELECT,
+        })
+      );
+
+      const results = await Promise.all(promises);
+      const executionTime = Date.now() - startTime;
+
+      const metric: PerformanceMetric = {
+        name: 'Concurrent Read Operations (10 queries)',
+        executionTime,
+        threshold: PERFORMANCE_THRESHOLDS.CONCURRENT_QUERIES,
+        status: executionTime <= PERFORMANCE_THRESHOLDS.CONCURRENT_QUERIES ? 'PASS' : 'FAIL',
+        details: {
+          queryCount: concurrentQueries.length,
+          avgExecutionTime: executionTime / concurrentQueries.length,
+          totalResults: results.reduce((sum, result) => sum + result.length, 0),
+        },
+      };
+
+      performanceMetrics.push(metric);
+
+      expect(executionTime).toBeLessThan(PERFORMANCE_THRESHOLDS.CONCURRENT_QUERIES);
+      expect(results.length).toBe(concurrentQueries.length);
+    });
+
+    it('should handle mixed read/write operations', async () => {
+      const perfData = global.perfTestData;
+      const operations = [
+        // Read operations
+        () =>
+          sequelize.query('SELECT * FROM Users WHERE company_id = ?', {
+            replacements: [perfData.companies[0].id],
+            type: QueryTypes.SELECT,
+          }),
+        () =>
+          sequelize.query('SELECT * FROM Companies WHERE owner_id = ?', {
+            replacements: [perfData.users[0].id],
+            type: QueryTypes.SELECT,
+          }),
+        // Write operations (simple updates that will be cleaned up)
+        () =>
+          sequelize.query('UPDATE Users SET last_name = ? WHERE id = ?', {
+            replacements: [`TempName${Date.now()}`, perfData.users[0].id],
+            type: QueryTypes.UPDATE,
+          }),
+        () =>
+          sequelize.query('UPDATE Companies SET description = ? WHERE id = ?', {
+            replacements: [`TempDesc${Date.now()}`, perfData.companies[0].id],
+            type: QueryTypes.UPDATE,
+          }),
+      ];
+
+      const startTime = Date.now();
+      const results = await Promise.all(operations.map((op) => op()));
+      const executionTime = Date.now() - startTime;
+
+      const metric: PerformanceMetric = {
+        name: 'Mixed Read/Write Operations',
+        executionTime,
+        threshold: PERFORMANCE_THRESHOLDS.CONCURRENT_QUERIES * 1.5, // Allow more time for writes
+        status: executionTime <= PERFORMANCE_THRESHOLDS.CONCURRENT_QUERIES * 1.5 ? 'PASS' : 'FAIL',
+        details: {
+          operationCount: operations.length,
+          readOperations: 2,
+          writeOperations: 2,
+        },
+      };
+
+      performanceMetrics.push(metric);
+
+      expect(executionTime).toBeLessThan(PERFORMANCE_THRESHOLDS.CONCURRENT_QUERIES * 1.5);
+
+      // Cleanup handled by dbCleaner in beforeEach
+    });
+  });
+
+  describe('Large Dataset Performance', () => {
+    it('should handle queries on large datasets efficiently', async () => {
+      // Create additional test data for large dataset testing
+      await createLargeDataset();
+
+      const largeDatasetQueries = [
+        {
+          name: 'Full User Listing with Pagination',
+          sql: `
+            SELECT u.*, c.name as company_name
+            FROM Users u
+            JOIN Companies c ON u.company_id = c.id
+            ORDER BY c.name, u.first_name, u.last_name
+            LIMIT 50
+          `,
+        },
+        {
+          name: 'User Role Count Aggregation',
+          sql: `
+            SELECT 
+              c.name as company_name,
+              COUNT(DISTINCT u.id) as user_count,
+              COUNT(ur.id) as total_roles
+            FROM Companies c
+            LEFT JOIN Users u ON c.id = u.company_id
+            LEFT JOIN UserRoles ur ON u.id = ur.user_id
+            GROUP BY c.id, c.name
+            HAVING total_roles >= 0
+            ORDER BY total_roles DESC
+          `,
+        },
+      ];
+
+      for (const query of largeDatasetQueries) {
+        const startTime = Date.now();
+
+        const result = await sequelize.query(query.sql, {
+          type: QueryTypes.SELECT,
+        });
+
+        const executionTime = Date.now() - startTime;
+
+        const metric: PerformanceMetric = {
+          name: `Large Dataset - ${query.name}`,
+          executionTime,
+          threshold: PERFORMANCE_THRESHOLDS.LARGE_DATASET_QUERY,
+          status: executionTime <= PERFORMANCE_THRESHOLDS.LARGE_DATASET_QUERY ? 'PASS' : 'FAIL',
+          details: {
+            resultCount: result.length,
+          },
+        };
+
+        performanceMetrics.push(metric);
+
+        expect(executionTime).toBeLessThan(PERFORMANCE_THRESHOLDS.LARGE_DATASET_QUERY);
+      }
+    });
+
+    it('should efficiently handle range queries', async () => {
+      const rangeQuery = `
+        SELECT 
+          u.*,
+          c.name as company_name,
+          COUNT(ur.id) as role_count
+        FROM Users u
+        JOIN Companies c ON u.company_id = c.id
+        LEFT JOIN UserRoles ur ON u.id = ur.user_id
+        WHERE u.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+        GROUP BY u.id, c.id
+        ORDER BY u.created_at DESC
+        LIMIT 100
+      `;
+
+      const startTime = Date.now();
+
+      const result = await sequelize.query(rangeQuery, {
+        type: QueryTypes.SELECT,
+      });
+
+      const executionTime = Date.now() - startTime;
+
+      // Analyze query plan for range query
+      const explain = (await sequelize.query(`EXPLAIN ${rangeQuery}`, {
+        type: QueryTypes.SELECT,
+      })) as QueryPlan[];
+
+      const metric: PerformanceMetric = {
+        name: 'Range Query Performance',
+        executionTime,
+        threshold: PERFORMANCE_THRESHOLDS.COMPLEX_JOIN,
+        status: executionTime <= PERFORMANCE_THRESHOLDS.COMPLEX_JOIN ? 'PASS' : 'FAIL',
+        details: {
+          resultCount: result.length,
+          queryPlan: explain,
+          usesIndex: explain.some((step) => step.key),
+        },
+      };
+
+      performanceMetrics.push(metric);
+
+      expect(executionTime).toBeLessThan(PERFORMANCE_THRESHOLDS.COMPLEX_JOIN);
+    });
+  });
+
+  describe('Performance Regression Detection', () => {
+    beforeEach(async () => {
+      await initializePerformanceTestData();
+    });
+
+    it('should establish baseline performance metrics', async () => {
+      const perfData = global.perfTestData;
+      const baselineTests = [
+        {
+          name: 'Primary Key Lookup',
+          query: 'SELECT * FROM Companies WHERE id = ?',
+          params: [perfData.companies[0].id],
+          expectedThreshold: PERFORMANCE_THRESHOLDS.SINGLE_RECORD_LOOKUP,
+        },
+        {
+          name: 'Foreign Key Lookup',
+          query: 'SELECT * FROM Users WHERE company_id = ?',
+          params: [perfData.companies[0].id],
+          expectedThreshold: PERFORMANCE_THRESHOLDS.FOREIGN_KEY_LOOKUP,
+        },
+        {
+          name: 'Simple JOIN',
+          query:
+            'SELECT u.*, c.name FROM Users u JOIN Companies c ON u.company_id = c.id WHERE c.id = ?',
+          params: [perfData.companies[0].id],
+          expectedThreshold: PERFORMANCE_THRESHOLDS.SIMPLE_JOIN,
+        },
+      ];
+
+      const baselineMetrics: any[] = [];
+
+      for (const test of baselineTests) {
+        const iterations = 5;
+        const executionTimes: number[] = [];
+
+        for (let i = 0; i < iterations; i++) {
+          const startTime = Date.now();
+
+          await sequelize.query(test.query, {
+            replacements: test.params,
+            type: QueryTypes.SELECT,
+          });
+
+          executionTimes.push(Date.now() - startTime);
+        }
+
+        const avgExecutionTime = executionTimes.reduce((sum, time) => sum + time, 0) / iterations;
+        const minExecutionTime = Math.min(...executionTimes);
+        const maxExecutionTime = Math.max(...executionTimes);
+
+        baselineMetrics.push({
+          name: test.name,
+          avgExecutionTime,
+          minExecutionTime,
+          maxExecutionTime,
+          threshold: test.expectedThreshold,
+          variance: maxExecutionTime - minExecutionTime,
+        });
+
+        expect(avgExecutionTime).toBeLessThan(test.expectedThreshold);
+      }
+
+      console.log('\n=== Baseline Performance Metrics ===');
+      console.log(JSON.stringify(baselineMetrics, null, 2));
+
+      // Store baseline metrics for future regression testing
+      // In a real implementation, this would be stored in a file or database
+      expect(baselineMetrics.length).toBe(baselineTests.length);
+    });
+
+    it('should detect performance anomalies', async () => {
+      const perfData = global.perfTestData;
+      // Simulate different database conditions
+      const performanceTests = [
+        {
+          name: 'Normal Load',
+          preCondition: async () => {}, // No additional load
+          query: 'SELECT * FROM Users WHERE company_id = ?',
+          params: [perfData.companies[0].id],
+        },
+        {
+          name: 'High Concurrency',
+          preCondition: async () => {
+            // Simulate concurrent operations
+            const concurrentOps = Array(20)
+              .fill(null)
+              .map(() =>
+                sequelize.query('SELECT COUNT(*) FROM Users', { type: QueryTypes.SELECT })
+              );
+            await Promise.all(concurrentOps);
+          },
+          query: 'SELECT * FROM Users WHERE company_id = ?',
+          params: [perfData.companies[0].id],
+        },
+      ];
+
+      for (const test of performanceTests) {
+        await test.preCondition();
+
+        const startTime = Date.now();
+
+        const result = await sequelize.query(test.query, {
+          replacements: test.params,
+          type: QueryTypes.SELECT,
+        });
+
+        const executionTime = Date.now() - startTime;
+
+        const metric: PerformanceMetric = {
+          name: `Anomaly Detection - ${test.name}`,
+          executionTime,
+          threshold: PERFORMANCE_THRESHOLDS.FOREIGN_KEY_LOOKUP * 2, // Allow for variance
+          status: executionTime <= PERFORMANCE_THRESHOLDS.FOREIGN_KEY_LOOKUP * 2 ? 'PASS' : 'WARN',
+          details: {
+            resultCount: result.length,
+            testCondition: test.name,
+          },
+        };
+
+        performanceMetrics.push(metric);
+
+        // Performance should still be reasonable under different conditions
+        expect(executionTime).toBeLessThan(PERFORMANCE_THRESHOLDS.FOREIGN_KEY_LOOKUP * 3);
+      }
+    });
+  });
+
+  // Helper functions for test data management
+  async function initializePerformanceTestData() {
+    // Ensure roles and NN company exist
+    await createStandardRoles();
+    await ensureNationalNinerCompanyExists();
+
+    // Create test companies
+    const company1 = await createTestCompany({
+      name: 'Performance Test Company 1',
+      subdomain: 'perftest1',
+    });
+
+    const company2 = await createTestCompany({
+      name: 'Performance Test Company 2',
+      subdomain: 'perftest2',
+    });
+
+    // Create test users
+    const user1 = await createTestUser(company1.id, {
+      email: 'perfuser1@example.com',
+      first_name: 'PerfUser1',
+      last_name: 'Test',
+    });
+
+    const user2 = await createTestUser(company1.id, {
+      email: 'perfuser2@example.com',
+      first_name: 'PerfUser2',
+      last_name: 'Test',
+    });
+
+    const user3 = await createTestUser(company2.id, {
+      email: 'perfuser3@example.com',
+      first_name: 'PerfUser3',
+      last_name: 'Test',
+    });
+
+    // Store IDs for use in queries (simplified approach for performance tests)
+    global.perfTestData = {
+      companies: [company1, company2],
+      users: [user1, user2, user3],
+    };
+  }
+
+  async function createLargeDataset() {
+    // Ensure we have base data first
+    await initializePerformanceTestData();
+
+    // Create additional companies for large dataset testing
+    for (let i = 3; i <= 10; i++) {
+      const company = await createTestCompany({
+        name: `Performance Test Company ${i}`,
+        subdomain: `perftest${i}`,
+      });
+
+      // Create users for each company
+      for (let j = 1; j <= 3; j++) {
+        await createTestUser(company.id, {
+          email: `perfuser${i}-${j}@example.com`,
+          first_name: `PerfUser${i}`,
+          last_name: `Test${j}`,
+        });
+      }
+    }
+  }
+
+  // Note: Cleanup is now handled by dbCleaner.cleanAll() in the test lifecycle
+});

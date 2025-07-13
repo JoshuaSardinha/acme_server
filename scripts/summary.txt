@@ -1,0 +1,90 @@
+AI Context Summary: National Niner Backend
+1. Core Application Concept
+
+The project is a multi-tenant, workflow-driven backend for a legal tech application named "National Niner." Its primary purpose is to allow administrators (NN_ADMIN) to create complex, dynamic "Petition Templates" (e.g., for a visa application). End-users (CLIENTS) can then select a template, start a new "Petition Instance," and are guided through a series of tasks to completion.
+
+The system is multi-tenant, supporting both the main "National Niner" brand and white-labeled "Vendor" companies who can offer the same service to their own clients.
+
+2. Key Actors & Roles
+
+CLIENT: The end-user starting a petition.
+
+NN_ADMIN: A "super admin" from National Niner. They design and publish all PetitionTemplates.
+
+VENDOR_ADMIN: An admin for a white-label partner company. They manage their own company's users and teams.
+
+NN_EMPLOYEE / VENDOR_EMPLOYEE: Internal staff who review client submissions, complete tasks, and manage petitions.
+
+NN_MANAGER / VENDOR_MANAGER: Staff who manage teams and can reassign tasks.
+
+3. The Core Workflow: From Template to Completion
+
+This is the most critical concept to understand:
+
+Template Design (Admin Task): An NN_ADMIN builds a PetitionTemplate. This template is a master blueprint composed of:
+
+Tabs: The UI structure (e.g., "Personal Info," "Evidence").
+
+Documents: Required documents within each tab (e.g., "Passport Scan").
+
+Task Models: The step-by-step workflow for completing a document (e.g., "Upload & OCR" vs. "Attorney-Assisted Drafting").
+
+Plans: Service tiers (e.g., "Basic," "Premium"). Each plan maps every required document to a specific TaskModel. The "Premium" plan might use the "Attorney-Assisted" task model while "Basic" uses the "Upload" model for the same document.
+
+Conditions: Logic rules (e.g., if client_is_married, then require marriage_certificate_task) that determine which tasks are necessary.
+
+Petition Instantiation (Client Task):
+
+A CLIENT selects a published PetitionTemplate and a Plan.
+
+They pay via Stripe.
+
+Upon successful payment, the backend creates a PetitionInstance.
+
+Task Graph Generation (System Task):
+
+The backend analyzes the chosen template and plan.
+
+It evaluates all conditions based on the client's initial data.
+
+It generates a personalized "Task Graph"—a set of TaskInstances for that specific client. Some tasks are OPEN (ready to be worked on), while others are LOCKED (waiting for prerequisite tasks to be completed).
+
+Task Execution (Client & Employee Task):
+
+The CLIENT and internal EMPLOYEES complete their assigned tasks in the graph (uploading files, filling forms, reviewing data).
+
+As tasks are completed, dependent tasks unlock (their status changes from LOCKED to OPEN).
+
+Compilation & Filing (Final Stage):
+
+Once all tasks are COMPLETED, the system compiles all documents and generated data into a final PDF package, ready for filing.
+
+4. Technical Architecture & Key Decisions
+
+Framework: NestJS (TypeScript). Code is organized into modules (UsersModule, PetitionTemplateModule, etc.) with a strict separation of concerns (thin Controllers, fat Services).
+
+Database: MySQL with Sequelize as the ORM. The database schema is complex and highly relational. All schema changes are managed via Sequelize migrations.
+
+Authorization: A permission-based system. Endpoints are protected by @RequirePermissions('permission:name'). Roles are simply named collections of these permissions. An NN_ADMIN has all permissions; other roles have a subset.
+
+Authentication: Auth0. The backend validates JWTs from Auth0. It does not handle passwords directly, but it does have a custom signup flow that programmatically creates users in Auth0 via the Management API.
+
+File Handling: All files are uploaded to a secure AWS S3 bucket after being scanned by a containerized ClamAV service. Downloads are facilitated via short-lived, pre-signed S3 URLs.
+
+Testing: A heavy emphasis on testing. Unit tests for services (with mocked dependencies) and E2E tests for controllers (using supertest against a real test database).
+
+5. Summary of Project Tasks & Phasing
+
+The project is structured into logical phases to manage dependencies:
+
+Phase 1 (Foundation): Set up the NestJS project, Docker, CI/CD, and the core Authentication/Permission system. Result: A secure, running application shell with no features.
+
+Phase 2 (Core Entities): Build the APIs to manage Users, Companies, and Teams. Result: A usable system for managing the application's actors.
+
+Phase 3 (Template Engine): Build the highly complex admin-facing engine for creating PetitionTemplates. Result: The "factory" is built, enabling the creation of petition workflows. This is the largest and most complex part of the backend.
+
+Phase 4 (Client Lifecycle): Implement the end-to-end client flow: checkout with Stripe, petition creation, and task completion. Result: A client can successfully start and work through a petition.
+
+Phase 5 (Supporting Features): Layer on advanced features like push notifications (OneSignal), task reassignment, and post-creation add-on purchases.
+
+Phase 6 (Finalization): Implement the final PDF compilation and filing tracking features.

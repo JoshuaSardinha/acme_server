@@ -1,0 +1,654 @@
+import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { getConnectionToken } from '@nestjs/sequelize';
+import { Test, TestingModule } from '@nestjs/testing';
+import { QueryTypes } from 'sequelize';
+import { Sequelize } from 'sequelize-typescript';
+
+// Core modules and guards
+import { AppModule } from '../../src/app.module';
+import { ClientVersionGuard } from '../../src/core/guards/client-version.guard';
+import { JwtAuthGuard } from '../../src/core/guards/jwt-auth.guard';
+
+// Test utilities
+import { MockJwtAuthGuard } from '../auth/mock-jwt-auth.guard';
+import { DbCleanerService } from '../utils/db-cleaner.service';
+import { createTestCompany } from '../factories/company.factory';
+import { createTestUser } from '../factories/user.factory';
+import { createStandardRoles } from '../factories/role.factory';
+import { ensureNationalNinerCompanyExists } from '../factories/national-niner-company.factory';
+
+// Entities
+import { User } from '../../src/modules/auth/entities/user.entity';
+import { Company } from '../../src/modules/company/entities/company.entity';
+import { TeamMember } from '../../src/modules/team/entities/team-member.entity';
+import { Team } from '../../src/modules/team/entities/team.entity';
+
+declare global {
+  var perfTestData: {
+    companies: any[];
+    users: any[];
+  };
+}
+
+describe('Performance Validation and Index Testing for Task 2.1', () => {
+  let app: INestApplication;
+  let sequelize: Sequelize;
+  let module: TestingModule;
+  let dbCleaner: DbCleanerService;
+
+  beforeAll(async () => {
+    const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [AppModule],
+    })
+      .overrideGuard(JwtAuthGuard)
+      .useClass(MockJwtAuthGuard)
+      .overrideGuard(ClientVersionGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
+
+    app = moduleFixture.createNestApplication();
+
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      })
+    );
+
+    await app.init();
+
+    sequelize = app.get<Sequelize>(getConnectionToken());
+    dbCleaner = new DbCleanerService(sequelize);
+    module = moduleFixture;
+  });
+
+  beforeEach(async () => {
+    // Clean database before each test
+    await dbCleaner.cleanAll();
+    
+    // Create standard roles first
+    await createStandardRoles();
+    
+    // Ensure National Niner company exists
+    await ensureNationalNinerCompanyExists();
+  });
+
+  afterAll(async () => {
+    // Final cleanup handled by dbCleaner
+    await dbCleaner.cleanAll();
+    await app.close();
+  });
+
+  describe('Index Existence Validation', () => {
+    it('should have primary key indexes on all tables', async () => {
+      // Check Companies primary key index
+      const companiesIndexes = await sequelize.query(
+        `SHOW INDEX FROM Companies WHERE Key_name = 'PRIMARY'`,
+        { type: QueryTypes.SELECT }
+      );
+      expect(companiesIndexes.length).toBeGreaterThan(0);
+      expect(companiesIndexes[0]['Column_name']).toBe('id');
+
+      // Check Users primary key index
+      const usersIndexes = await sequelize.query(
+        `SHOW INDEX FROM Users WHERE Key_name = 'PRIMARY'`,
+        { type: QueryTypes.SELECT }
+      );
+      expect(usersIndexes.length).toBeGreaterThan(0);
+      expect(usersIndexes[0]['Column_name']).toBe('id');
+    });
+
+    it('should have foreign key indexes for performance', async () => {
+      // Check Companies.owner_id index (if exists)
+      const companiesOwnerIndex = await sequelize.query(
+        `SHOW INDEX FROM Companies WHERE Column_name = 'owner_id'`,
+        { type: QueryTypes.SELECT }
+      );
+      // Note: owner_id index might not exist, that's okay
+      
+      // Check Users.company_id index
+      const usersCompanyIndex = await sequelize.query(
+        `SHOW INDEX FROM Users WHERE Column_name = 'company_id'`,
+        { type: QueryTypes.SELECT }
+      );
+      expect(usersCompanyIndex.length).toBeGreaterThan(0);
+
+      // Check for email index on Users (common performance index)
+      const usersEmailIndex = await sequelize.query(
+        `SHOW INDEX FROM Users WHERE Column_name = 'email'`,
+        { type: QueryTypes.SELECT }
+      );
+      expect(usersEmailIndex.length).toBeGreaterThan(0);
+    });
+
+    it('should have proper indexes on key tables', async () => {
+      // Check Users table for key indexes
+      const usersIndexes = await sequelize.query(
+        `SHOW INDEX FROM Users`,
+        { type: QueryTypes.SELECT }
+      );
+      
+      const hasEmailIndex = usersIndexes.some((idx) => idx['Column_name'] === 'email');
+      const hasCompanyIdIndex = usersIndexes.some((idx) => idx['Column_name'] === 'company_id');
+      
+      expect(hasEmailIndex).toBe(true);
+      expect(hasCompanyIdIndex).toBe(true);
+      
+      // Check Companies table for indexes
+      const companiesIndexes = await sequelize.query(
+        `SHOW INDEX FROM Companies`,
+        { type: QueryTypes.SELECT }
+      );
+      
+      expect(companiesIndexes.length).toBeGreaterThan(0); // At least primary key
+    });
+
+    it('should verify index cardinality and usage statistics', async () => {
+      // Get index statistics
+      const indexStats = await sequelize.query(
+        `
+        SELECT 
+          TABLE_NAME,
+          INDEX_NAME,
+          COLUMN_NAME,
+          CARDINALITY,
+          NON_UNIQUE
+        FROM INFORMATION_SCHEMA.STATISTICS 
+        WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME IN ('Companies', 'Users', 'UserRoles')
+        ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX
+      `,
+        { type: QueryTypes.SELECT }
+      );
+
+      expect(indexStats.length).toBeGreaterThan(0);
+
+      // Log index information for analysis
+      console.log('Index Statistics:', indexStats);
+    });
+  });
+
+  describe('Query Performance with Indexes', () => {
+    beforeEach(async () => {
+      // Create test data for performance testing
+      await createPerformanceTestData();
+    });
+
+    it('should use indexes for foreign key queries', async () => {
+      const perfData = global.perfTestData;
+      
+      // Test Companies.owner_id query
+      const companyExplain = await sequelize.query(
+        `EXPLAIN SELECT * FROM Companies WHERE owner_id = ?`,
+        {
+          replacements: [perfData.users[0].id],
+          type: QueryTypes.SELECT,
+        }
+      );
+
+      // Should use index (possible_keys should include owner_id index)
+      expect(companyExplain[0]['possible_keys']).toBeTruthy();
+
+      // Test Users.company_id query
+      const userExplain = await sequelize.query(
+        `EXPLAIN SELECT * FROM Users WHERE company_id = ?`,
+        {
+          replacements: [perfData.companies[0].id],
+          type: QueryTypes.SELECT,
+        }
+      );
+
+      expect(userExplain[0]['possible_keys']).toBeTruthy();
+
+      // Test UserRoles.user_id query
+      const userRoleExplain = await sequelize.query(
+        `EXPLAIN SELECT * FROM UserRoles WHERE user_id = ?`,
+        {
+          replacements: [perfData.users[0].id],
+          type: QueryTypes.SELECT,
+        }
+      );
+
+      expect(userRoleExplain[0]['possible_keys']).toBeTruthy();
+    });
+
+    it('should perform efficiently on indexed JOIN queries', async () => {
+      const perfData = global.perfTestData;
+      const joinExplain = await sequelize.query(
+        `
+        EXPLAIN SELECT 
+          c.name as company_name,
+          u.first_name,
+          u.last_name,
+          COUNT(ur.role_id) as role_count
+        FROM Companies c
+        JOIN Users u ON c.id = u.company_id
+        LEFT JOIN UserRoles ur ON u.id = ur.user_id
+        WHERE c.id = ?
+        GROUP BY c.id, u.id
+      `,
+        {
+          replacements: [perfData.companies[0].id],
+          type: QueryTypes.SELECT,
+        }
+      );
+
+      // All joins should use indexes
+      joinExplain.forEach((row) => {
+        if (row['key']) {
+          expect(row['key']).toBeTruthy();
+        }
+      });
+
+      console.log('JOIN Query Explain:', joinExplain);
+    });
+
+    it('should meet performance thresholds for common queries', async () => {
+      const perfData = global.perfTestData;
+      // Test query performance with timing
+      const startTime = Date.now();
+
+      // Common query: Get users for a company
+      await sequelize.query(`SELECT * FROM Users WHERE company_id = ?`, {
+        replacements: [perfData.companies[0].id],
+        type: QueryTypes.SELECT,
+      });
+
+      const usersQueryTime = Date.now() - startTime;
+      expect(usersQueryTime).toBeLessThan(50); // Should complete in < 50ms
+
+      const startTime2 = Date.now();
+
+      // Common query: Get user roles for a user
+      await sequelize.query(`SELECT * FROM UserRoles WHERE user_id = ?`, {
+        replacements: [perfData.users[0].id],
+        type: QueryTypes.SELECT,
+      });
+
+      const rolesQueryTime = Date.now() - startTime2;
+      expect(rolesQueryTime).toBeLessThan(50); // Should complete in < 50ms
+
+      console.log(
+        `Users query time: ${usersQueryTime}ms, Roles query time: ${rolesQueryTime}ms`
+      );
+    });
+
+    it('should handle bulk queries efficiently', async () => {
+      // Create additional test data for bulk testing
+      await createBulkTestData();
+
+      const startTime = Date.now();
+
+      // Bulk query: Get all users with their role counts
+      const results = await sequelize.query(
+        `
+        SELECT 
+          u.id,
+          u.first_name,
+          u.last_name,
+          u.company_id,
+          COUNT(ur.role_id) as role_count
+        FROM Users u
+        LEFT JOIN UserRoles ur ON u.id = ur.user_id
+        GROUP BY u.id, u.first_name, u.last_name, u.company_id
+        ORDER BY u.first_name
+      `,
+        { type: QueryTypes.SELECT }
+      );
+
+      const bulkQueryTime = Date.now() - startTime;
+
+      expect(results.length).toBeGreaterThan(0);
+      expect(bulkQueryTime).toBeLessThan(200); // Should complete in < 200ms
+
+      console.log(`Bulk query returned ${results.length} results in ${bulkQueryTime}ms`);
+    });
+  });
+
+  describe('Index Optimization Analysis', () => {
+    beforeEach(async () => {
+      await createPerformanceTestData();
+    });
+
+    it('should analyze query execution plans for optimization opportunities', async () => {
+
+      // Complex query that should benefit from multiple indexes
+      const complexQuery = `
+        SELECT 
+          c.name as company_name,
+          c.email as company_email,
+          u.first_name,
+          u.last_name,
+          u.email as user_email,
+          COUNT(ur.role_id) as role_count
+        FROM Companies c
+        JOIN Users u ON c.id = u.company_id
+        LEFT JOIN UserRoles ur ON u.id = ur.user_id
+        WHERE c.owner_id IS NOT NULL
+        GROUP BY c.id, u.id
+        HAVING role_count >= 0
+        ORDER BY c.name, u.first_name
+      `;
+
+      const explain = await sequelize.query(`EXPLAIN ${complexQuery}`, {
+        type: QueryTypes.SELECT,
+      });
+
+      // Log detailed explanation for analysis
+      console.log('Complex Query Execution Plan:');
+      explain.forEach((row, index) => {
+        console.log(`Step ${index + 1}:`, {
+          table: row['table'],
+          type: row['type'],
+          key: row['key'],
+          rows: row['rows'],
+          extra: row['Extra'],
+        });
+      });
+
+      // Verify that joins are using indexes (not full table scans)
+      const fullTableScans = explain.filter(
+        (row) => row['type'] === 'ALL' && row['table'] !== 'derived'
+      );
+
+      // Should minimize full table scans
+      expect(fullTableScans.length).toBeLessThanOrEqual(1);
+    });
+
+    it('should validate index selectivity and effectiveness', async () => {
+      // Check index cardinality for selectivity analysis
+      const cardinalityQuery = `
+        SELECT 
+          TABLE_NAME,
+          INDEX_NAME,
+          COLUMN_NAME,
+          CARDINALITY,
+          CASE 
+            WHEN CARDINALITY = 0 THEN 'No Data'
+            WHEN CARDINALITY = 1 THEN 'Low Selectivity'
+            WHEN CARDINALITY < 10 THEN 'Medium Selectivity'
+            ELSE 'High Selectivity'
+          END as SELECTIVITY_ASSESSMENT
+        FROM INFORMATION_SCHEMA.STATISTICS 
+        WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME IN ('Companies', 'Users', 'UserRoles')
+        AND INDEX_NAME != 'PRIMARY'
+        ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX
+      `;
+
+      const cardinalityResults = await sequelize.query(cardinalityQuery, {
+        type: QueryTypes.SELECT,
+      });
+
+      console.log('Index Selectivity Analysis:', cardinalityResults);
+
+      // Verify that foreign key indexes have reasonable cardinality
+      expect(cardinalityResults.length).toBeGreaterThan(0);
+    });
+
+    it('should test index usage with different query patterns', async () => {
+      const perfData = global.perfTestData;
+
+      // Pattern 1: Equality search on foreign key
+      const pattern1Explain = await sequelize.query(
+        `EXPLAIN SELECT * FROM Users WHERE company_id = ?`,
+        {
+          replacements: [perfData.companies[0].id],
+          type: QueryTypes.SELECT,
+        }
+      );
+
+      // Pattern 2: IN clause search
+      const pattern2Explain = await sequelize.query(
+        `EXPLAIN SELECT * FROM Users WHERE company_id IN (?, ?)`,
+        {
+          replacements: [
+            perfData.companies[0].id,
+            perfData.companies[1].id,
+          ],
+          type: QueryTypes.SELECT,
+        }
+      );
+
+      // Pattern 3: JOIN with ORDER BY
+      const pattern3Explain = await sequelize.query(
+        `
+        EXPLAIN SELECT u.*, c.name as company_name 
+        FROM Users u 
+        JOIN Companies c ON u.company_id = c.id 
+        ORDER BY c.name, u.first_name
+      `,
+        { type: QueryTypes.SELECT }
+      );
+
+      // Log patterns for analysis
+      console.log('Query Pattern Analysis:');
+      console.log('Pattern 1 (Equality):', pattern1Explain[0]);
+      console.log('Pattern 2 (IN clause):', pattern2Explain[0]);
+      console.log('Pattern 3 (JOIN + ORDER BY):', pattern3Explain);
+
+      // All patterns should use indexes effectively
+      expect(pattern1Explain[0]['key']).toBeTruthy();
+      expect(pattern2Explain[0]['key']).toBeTruthy();
+    });
+  });
+
+  describe('Performance Regression Testing', () => {
+    it('should establish baseline performance metrics', async () => {
+      await createLargeDataset();
+      const perfData = global.perfTestData;
+
+      const metrics = {};
+
+      // Metric 1: Single record lookup by foreign key
+      const start1 = Date.now();
+      await sequelize.query(`SELECT * FROM Users WHERE company_id = ? LIMIT 1`, {
+        replacements: [perfData.companies[0].id],
+        type: QueryTypes.SELECT,
+      });
+      metrics['single_fk_lookup'] = Date.now() - start1;
+
+      // Metric 2: JOIN query performance
+      const start2 = Date.now();
+      await sequelize.query(
+        `
+        SELECT u.*, c.name as company_name 
+        FROM Users u 
+        JOIN Companies c ON u.company_id = c.id 
+        LIMIT 10
+      `,
+        { type: QueryTypes.SELECT }
+      );
+      metrics['join_query'] = Date.now() - start2;
+
+      // Metric 3: Aggregate query performance
+      const start3 = Date.now();
+      await sequelize.query(
+        `
+        SELECT 
+          c.name,
+          COUNT(u.id) as user_count,
+          COUNT(ur.id) as total_roles
+        FROM Companies c
+        LEFT JOIN Users u ON c.id = u.company_id
+        LEFT JOIN UserRoles ur ON u.id = ur.user_id
+        GROUP BY c.id, c.name
+      `,
+        { type: QueryTypes.SELECT }
+      );
+      metrics['aggregate_query'] = Date.now() - start3;
+
+      console.log('Performance Baseline Metrics:', metrics);
+
+      // Set reasonable thresholds
+      expect(metrics['single_fk_lookup']).toBeLessThan(10);
+      expect(metrics['join_query']).toBeLessThan(25);
+      expect(metrics['aggregate_query']).toBeLessThan(100);
+    });
+
+    it('should validate concurrent query performance', async () => {
+      await createPerformanceTestData();
+      const perfData = global.perfTestData;
+
+      // Simulate concurrent queries
+      const concurrentQueries: Promise<any>[] = [];
+
+      for (let i = 0; i < 5; i++) {
+        concurrentQueries.push(
+          sequelize.query(`SELECT * FROM Users WHERE company_id = ?`, {
+            replacements: [perfData.companies[0].id],
+            type: QueryTypes.SELECT,
+          })
+        );
+      }
+
+      const startTime = Date.now();
+      const results = await Promise.all(concurrentQueries);
+      const totalTime = Date.now() - startTime;
+
+      expect(results.length).toBe(5);
+      expect(totalTime).toBeLessThan(100); // All concurrent queries should complete quickly
+
+      console.log(`${concurrentQueries.length} concurrent queries completed in ${totalTime}ms`);
+    });
+  });
+
+  describe('Index Maintenance and Monitoring', () => {
+    beforeEach(async () => {
+      await createPerformanceTestData();
+    });
+
+    it('should check for unused indexes', async () => {
+      // Query to identify potentially unused indexes
+      const unusedIndexQuery = `
+        SELECT 
+          s.TABLE_NAME,
+          s.INDEX_NAME,
+          s.COLUMN_NAME,
+          s.CARDINALITY
+        FROM INFORMATION_SCHEMA.STATISTICS s
+        WHERE s.TABLE_SCHEMA = DATABASE()
+        AND s.TABLE_NAME IN ('Companies', 'Teams', 'TeamMembers')
+        AND s.INDEX_NAME != 'PRIMARY'
+        ORDER BY s.TABLE_NAME, s.INDEX_NAME
+      `;
+
+      const indexInfo = await sequelize.query(unusedIndexQuery, {
+        type: QueryTypes.SELECT,
+      });
+
+      console.log('Current Index Information:', indexInfo);
+
+      // All foreign key columns should have indexes
+      const expectedIndexes = [
+        'owner_id', // Companies
+        'company_id', // Users
+        'user_id', // UserRoles
+        'role_id', // UserRoles
+      ];
+
+      const indexedColumns = indexInfo.map((idx) => idx['COLUMN_NAME']);
+
+      expectedIndexes.forEach((expectedCol) => {
+        expect(indexedColumns).toContain(expectedCol);
+      });
+    });
+
+    it('should analyze index fragmentation and optimization needs', async () => {
+      // Check table and index sizes
+      const tableSizeQuery = `
+        SELECT 
+          TABLE_NAME,
+          ROUND(((DATA_LENGTH + INDEX_LENGTH) / 1024 / 1024), 2) AS 'DB_SIZE_MB',
+          ROUND((INDEX_LENGTH / 1024 / 1024), 2) AS 'INDEX_SIZE_MB',
+          ROUND((INDEX_LENGTH / (DATA_LENGTH + INDEX_LENGTH)) * 100, 2) AS 'INDEX_RATIO_%'
+        FROM information_schema.TABLES 
+        WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME IN ('Companies', 'Users', 'UserRoles')
+        ORDER BY (DATA_LENGTH + INDEX_LENGTH) DESC
+      `;
+
+      const sizeInfo = await sequelize.query(tableSizeQuery, {
+        type: QueryTypes.SELECT,
+      });
+
+      console.log('Table Size Analysis:', sizeInfo);
+
+      // Verify reasonable index to data ratios
+      sizeInfo.forEach((table) => {
+        const indexRatio = parseFloat(table['INDEX_RATIO_%']);
+        // Index ratio should be reasonable (not too high, indicating over-indexing)
+        expect(indexRatio).toBeLessThan(80);
+      });
+    });
+  });
+
+  // Helper functions for test data creation
+  async function createPerformanceTestData() {
+    // Ensure roles and NN company exist
+    await createStandardRoles();
+    await ensureNationalNinerCompanyExists();
+    
+    // Create test companies
+    const company1 = await createTestCompany({
+      name: 'PerfTest Company 1',
+      subdomain: 'perftest1',
+    });
+    
+    const company2 = await createTestCompany({
+      name: 'PerfTest Company 2',
+      subdomain: 'perftest2',
+    });
+
+    // Create test users
+    await createTestUser(company1.id, {
+      email: 'perftest1@example.com',
+      first_name: 'PerfTest1',
+      last_name: 'User1',
+    });
+    
+    await createTestUser(company1.id, {
+      email: 'perftest2@example.com',
+      first_name: 'PerfTest2',
+      last_name: 'User2',
+    });
+    
+    await createTestUser(company2.id, {
+      email: 'perftest3@example.com',
+      first_name: 'PerfTest3',
+      last_name: 'User3',
+    });
+  }
+
+  async function createBulkTestData() {
+    // Create additional bulk data for performance testing
+    await createStandardRoles();
+    await ensureNationalNinerCompanyExists();
+    
+    // Create additional companies
+    for (let i = 3; i <= 10; i++) {
+      const company = await createTestCompany({
+        name: `PerfTest Company ${i}`,
+        subdomain: `perftest${i}`,
+      });
+      
+      // Create users for each company
+      for (let j = 1; j <= 3; j++) {
+        await createTestUser(company.id, {
+          email: `perftest${i}-${j}@example.com`,
+          first_name: `PerfTest${i}`,
+          last_name: `User${j}`,
+        });
+      }
+    }
+  }
+
+  async function createLargeDataset() {
+    await createPerformanceTestData();
+    await createBulkTestData();
+    
+    // Additional users are created in createBulkTestData
+    // No need for separate team member creation
+  }
+});

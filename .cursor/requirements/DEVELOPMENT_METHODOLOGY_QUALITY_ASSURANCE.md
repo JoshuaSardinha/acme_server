@@ -1,0 +1,133 @@
+**Module: Development Methodology & Quality Assurance**
+
+**REQ-DEVTEST-001: Backend Development & Testing Standards**
+
+- **Requirement Type:** Non-Functional, Quality Assurance, Development Process
+- **Description:** The backend system development MUST adhere to Test-Driven Development (TDD) principles and be supported by a comprehensive, automated testing strategy. The goal is to ensure high code quality, functional correctness, security, and maintainability. All new features, bug fixes, and refactoring MUST be accompanied by appropriate tests.  
+  **I. Test-Driven Development (TDD) Adherence:**
+  - **Red-Green-Refactor:** For new functionality, particularly at the unit and integration level, tests (initially failing \- "Red") MUST be written _before_ the implementation code. Implementation code is then written to make these tests pass ("Green"), followed by refactoring of both test and implementation code for clarity and efficiency while ensuring tests continue to pass.
+  - **Test Granularity:** TDD should primarily focus on unit tests and fine-grained integration tests to guide design and ensure individual components function as expected.
+- **II. Test Types & Coverage:**  
+  A comprehensive suite of automated tests MUST be developed, including:
+  - **Unit Tests:**
+    - **Scope:** Test individual functions, methods, classes, or modules in isolation.
+    - **Dependencies:** External dependencies (databases, external services, other modules) MUST be mocked or stubbed.
+    - **Coverage:** Aim for high unit test coverage of business logic, helper functions, and complex algorithms (e.g., task graph generation, condition evaluation).
+  -
+  - **Integration Tests:**
+    - **Scope:** Test the interaction between two or more components or layers of the application (e.g., API controllers and service layers, service layers and data access layers/repositories).
+    - **Dependencies:** May involve a real test database instance or in-memory versions for faster execution, but external third-party services (Auth0, OneSignal, Payment Gateway, AI Services) SHOULD still be mocked or stubbed to ensure test reliability and avoid external dependencies.
+    - **Focus:** Verify data flow, contract adherence between components, and basic interaction logic.
+  -
+  - **API / End-to-End (E2E) Tests:**
+    - **Scope:** Test the full request/response cycle of every API endpoint as a black box, from HTTP request to HTTP response, including database interactions.
+    - **Environment:** Run against a deployed instance of the application in a dedicated, controlled test environment with its own database.
+    - **Coverage:** Every API endpoint (as defined in the OAS) MUST have E2E tests covering the scenarios detailed in Section III.
+  -
+  - **Security Tests:**
+    - While many security aspects are covered by robust functional E2E tests (e.g., authorization), specific security tests SHOULD be considered for:
+      - Verifying security header implementation (REQ-SEC-MISCONF-001).
+      - Testing against common OWASP Top 10 vulnerabilities where static analysis or functional tests might not suffice (e.g., specific SSRF probes if applicable, complex access control bypass attempts).
+      - These can be a mix of automated tests and manual penetration testing activities (covered by a separate security assessment plan).
+    -
+  -
+- **III. API / End-to-End Test Case Scenarios (for every relevant endpoint):**  
+  For each API endpoint, tests MUST cover various flows, including but not limited to:
+  - **Successful Operations ("Happy Path"):**
+    - Valid input data that meets all business rules.
+    - Verification of:
+      - Correct HTTP Status Code (e.g., 200 OK, 201 Created, 204 No Content).
+      - Response Headers (e.g., Content-Type, Location for POST).
+      - Response Body Structure (MUST match the OpenAPI Specification schema).
+      - Correctness of data values within the response body.
+      - Correct state changes in the database (e.g., new record created, existing record updated/deleted, related records affected).
+      - Correct invocation of mocked external services (e.g., an email being "sent").
+    -
+  -
+  - **Input Validation Failures (aligns with REQ-SEC-INJECT-001, REQ-SEC-INJECT-003, DataPoints.validation_rules):**
+    - Missing required fields in request body/query/path.
+    - Incorrect data types for fields.
+    - Data violating length constraints (min/max).
+    - Data violating range constraints (min/max for numbers).
+    - Data in invalid formats (e.g., malformed email, invalid UUID, incorrect date format).
+    - Invalid enum values.
+    - Attempts to inject basic malicious payloads (e.g., simple XSS strings, SQLi-like characters) to ensure sanitization/parameterization holds.
+    - Verification of:
+      - Correct HTTP Status Code (typically 400 Bad Request or 422 Unprocessable Entity).
+      - Error response body structure (consistent, informative, non-sensitive error messages).
+    -
+  -
+  - **Authentication Failures (aligns with REQ-AUTH-002):**
+    - Request without Authorization header.
+    - Request with an invalid, expired, or malformed JWT.
+    - Verification of:
+      - Correct HTTP Status Code (typically 401 Unauthorized).
+    -
+  -
+  - **Authorization Failures (aligns with REQ-SEC-BAC-001, REQ-SEC-BAC-002, REQ-AUTHZ-...):**
+    - User with an insufficient role attempting the action.
+    - User attempting to access/modify a resource not owned by them or their company (IDOR scenarios).
+    - User attempting actions restricted by specific attributes (e.g., non-lawyer attempting lawyer-only task step).
+    - Verification of:
+      - Correct HTTP Status Code (typically 403 Forbidden).
+    -
+  -
+  - **Business Logic & State Violation Failures:**
+    - Operations violating defined business rules or constraints (e.g., creating a duplicate unique resource, violating REQ-TEAM-007 for legal teams, attempting to publish an incomplete petition template REQ-PTMPL-VALIDATE-001).
+    - Attempting actions on resources in an invalid state (e.g., trying to modify a 'PUBLISHED' petition template in ways only allowed for 'DRAFT').
+    - Verification of:
+      - Correct HTTP Status Code (e.g., 409 Conflict, 422 Unprocessable Entity, or other appropriate 4xx codes).
+      - Informative error messages in the response body.
+    -
+  -
+  - **Resource Not Found Failures:**
+    - Attempting GET, PATCH, PUT, DELETE operations on non-existent resource IDs.
+    - Verification of:
+      - Correct HTTP Status Code (typically 404 Not Found).
+    -
+  -
+  - **Idempotency (for PUT, DELETE, and safe POST operations):**
+    - Ensure that making the same request multiple times has the same effect on system state as making it once.
+  -
+  - **Pagination & Filtering Tests (for list endpoints):**
+    - Verify correctness of paginated results (limit, offset, total counts).
+    - Verify filtering logic for all supported filter parameters.
+    - Test edge cases for pagination (e.g., empty list, page beyond total).
+  -
+- **IV. Testing Environment & Data Management:**
+  - **Dedicated Test Environment:** All automated tests (especially integration and E2E) MUST run in a dedicated, isolated test environment.
+  - **Test Data:**
+    - A consistent strategy for managing test data MUST be implemented (e.g., database seeding scripts, fixture libraries, data factories).
+    - Tests MUST be independent and not rely on the state left by previous tests. Each test or test suite should set up its required data and, if necessary, tear it down.
+    - PII or sensitive production data MUST NOT be used in test environments. Anonymized or realistically fabricated data should be used.
+  -
+- **V. Test Automation & CI/CD Integration:**
+  - **Automation:** All unit, integration, and primary E2E tests MUST be automated.
+  - **CI/CD Pipeline:** Tests MUST be integrated into the CI/CD pipeline and run automatically on every code commit/push to main branches and before any deployment.
+  - **Build Failure:** The CI/CD pipeline MUST be configured to fail the build or deployment if any tests fail.
+- **VI. Test Reporting & Code Coverage:**
+  - **Reporting:** Clear and actionable test execution reports MUST be generated by the CI/CD pipeline.
+  - **Code Coverage:** Code coverage metrics MUST be tracked for unit tests (and potentially integration tests). A minimum acceptable coverage threshold (e.g., 80-90% for business-critical logic) SHOULD be defined and enforced. Low or decreasing coverage should trigger a review.
+- **VII. Recommended Tools & Frameworks (for Node.js/Express backend):**
+  - **Test Runner/Framework:** Jest or Mocha.
+  - **Assertion Library:** Chai (if using Mocha), or Jest's built-in assertions.
+  - **Mocking/Stubbing:** Jest's built-in mocking, Sinon.JS.
+  - **API/HTTP Testing:** Supertest.
+  - **Code Coverage:** Jest's built-in coverage (Istanbul).
+- **VIII. Test Readability & Maintenance:**
+  - Tests MUST be written in a clear, readable, and maintainable manner.
+  - Test names SHOULD accurately describe the scenario being tested.
+  - Tests should serve as living documentation of the system's expected behavior.
+-
+- **Rationale:** To establish a rigorous development and testing culture that proactively identifies defects, ensures requirements are met, improves design through TDD, facilitates safer refactoring, and ultimately delivers a high-quality, secure, and reliable backend system.
+- **Acceptance Criteria:**
+  - TDD practices are demonstrably followed for new feature development.
+  - A comprehensive automated test suite exists, covering unit, integration, and API/E2E tests as specified.
+  - API/E2E tests validate success cases, input validation, authentication, authorization, business logic errors, and resource handling for all endpoints.
+  - Tests are integrated into the CI/CD pipeline and block failing builds/deployments.
+  - Code coverage reports are generated and meet or exceed defined targets for critical modules.
+  - Test data management strategy is in place and ensures test isolation.
+  - Testing tools and frameworks are consistently used by the development team.
+-
+- **Priority:** Must Have
+- **Standard/Reference:** Test-Driven Development (Kent Beck), Agile Testing Principles, ISTQB Syllabi, OWASP Testing Guide, Respective tool documentation.

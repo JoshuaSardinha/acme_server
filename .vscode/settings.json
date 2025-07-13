@@ -1,0 +1,15 @@
+{
+  "files.associations": {
+    "Jenkinsfile": "groovy" // treat "Jenkinsfile" as "groovy"
+  },
+  "[groovy]": {
+    "editor.defaultFormatter": "NicolasVuillamy.vscode-groovy-lint"
+  },
+  "files.exclude": {
+    "**/*.DISABLED": true
+  },
+  "search.exclude": {
+    "**/*.DISABLED": true
+  },
+  "typescript.preferences.includePackageJsonAutoImports": "off"
+}

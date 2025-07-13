@@ -1,0 +1,83 @@
+{
+  "environments": {
+    "dev": {
+      "name": "Development",
+      "server": {
+        "host": "147.93.46.157",
+        "user": "deploy",
+        "port": 22,
+        "deployment_path": "/opt/national-niner-dev"
+      },
+      "database": {
+        "name_suffix": "_dev",
+        "migration_strategy": "auto"
+      },
+      "deployment": {
+        "auto_deploy": true,
+        "requires_approval": false,
+        "health_check_timeout": 120,
+        "rollback_on_failure": true
+      },
+      "notifications": {
+        "slack_channel": "#dev-deployments",
+        "email_on_failure": true
+      }
+    },
+    "prod": {
+      "name": "Production",
+      "server": {
+        "host": "PROD_SERVER_IP_HERE",
+        "user": "deploy",
+        "port": 22,
+        "deployment_path": "/opt/national-niner-prod"
+      },
+      "database": {
+        "name_suffix": "_prod",
+        "migration_strategy": "manual_approval"
+      },
+      "deployment": {
+        "auto_deploy": false,
+        "requires_approval": true,
+        "health_check_timeout": 300,
+        "rollback_on_failure": true,
+        "approval_timeout_minutes": 60
+      },
+      "notifications": {
+        "slack_channel": "#prod-deployments",
+        "email_on_failure": true,
+        "email_on_success": true
+      }
+    }
+  },
+  "branch_strategy": {
+    "main": {
+      "deploy_to": ["dev", "prod"],
+      "prod_requires_approval": true
+    },
+    "develop": {
+      "deploy_to": ["dev"]
+    },
+    "feature/*": {
+      "deploy_to": ["dev"]
+    },
+    "hotfix/*": {
+      "deploy_to": ["dev", "prod"],
+      "prod_requires_approval": true,
+      "fast_track": true
+    }
+  },
+  "credential_mapping": {
+    "dev": {
+      "db_credentials": "DEV_DB_CREDENTIALS",
+      "auth0_credentials": "DEV_AUTH0_CREDENTIALS",
+      "ssh_key": "DEV_SSH_KEY",
+      "env_secrets": "DEV_ENV_SECRETS"
+    },
+    "prod": {
+      "db_credentials": "PROD_DB_CREDENTIALS", 
+      "auth0_credentials": "PROD_AUTH0_CREDENTIALS",
+      "ssh_key": "PROD_SSH_KEY",
+      "env_secrets": "PROD_ENV_SECRETS"
+    }
+  }
+}
