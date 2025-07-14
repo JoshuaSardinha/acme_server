@@ -49,7 +49,7 @@ acme_server/
 - **Framework**: NestJS (Node.js)
 - **Database**: MySQL with Sequelize ORM
 - **Authentication**: JWT with Auth0
-- **AI/ML**: LangChain, Gemini, Vector Embeddings
+- **AI/ML**: LangChain framework, Google Gemini 2.0, Vector Embeddings, RAG
 - **Testing**: Jest (Unit, E2E, Integration tests)
 - **Documentation**: Swagger/OpenAPI
 
@@ -126,16 +126,57 @@ npm run test:watch
 - **Rate Limiting**: API throttling for DDoS protection
 - **Audit Logging**: Comprehensive activity tracking
 
-## 💬 Chat Module Features
+## 🤖 LangChain-Powered AI Chat Module
+
+### Core Implementation: `langchain.service.ts`
+
+The heart of the AI functionality lies in the **LangChain service** (`src/modules/chat/services/langchain.service.ts`), which provides sophisticated conversational AI capabilities for EB-2 NIW immigration assistance.
+
+#### Key LangChain Components
+
+- **Google Gemini Integration**: Uses `ChatGoogleGenerativeAI` with the latest `gemini-2.0-flash-exp` model
+- **Prompt Engineering**: Advanced prompt templates for immigration-specific queries
+- **Chain Processing**: `RunnableSequence` for streamlined AI workflows
+- **Output Parsing**: Structured responses with confidence scoring
+
+#### Advanced Features
+
+```typescript
+// Expert immigration attorney persona with specialized knowledge
+const promptTemplate = PromptTemplate.fromTemplate(`
+You are an expert immigration attorney specializing in EB-2 visa applications, 
+particularly the National Interest Waiver (NIW) category...
+`);
+
+// Chain-based processing for consistent, reliable responses
+const chain = RunnableSequence.from([promptTemplate, this.model, new StringOutputParser()]);
+```
+
+#### Document Processing & Validation
+
+- **Smart Document Analysis**: Automated review of immigration documents against EB-2 requirements
+- **JSON-Structured Validation**: Returns structured feedback with issues and suggestions
+- **Context-Aware Processing**: Incorporates document content into conversational context
+- **Confidence Scoring**: Calculates response reliability based on context relevance
+
+#### Technical Specifications
+
+- **Model**: Google Gemini 2.0 Flash Experimental
+- **Temperature**: 0.3 (balanced creativity/accuracy)
+- **Max Output**: 2048 tokens
+- **Error Handling**: Comprehensive error recovery and logging
+- **Performance**: Async processing with proper TypeScript typing
+
+### Chat Module Features
 
 The AI-powered chat module specializes in EB-2 NIW (Employment-Based Second Preference National Interest Waiver) immigration assistance:
 
-- **Document Analysis**: Upload and analyze supporting documents
-- **Eligibility Assessment**: Evaluate qualifications against NIW criteria
-- **Personalized Guidance**: Tailored recommendations based on user profile
+- **Document Analysis**: Upload and analyze supporting documents via LangChain processing
+- **Eligibility Assessment**: Evaluate qualifications against NIW criteria using AI reasoning
+- **Personalized Guidance**: Tailored recommendations based on user profile and documents
 - **Multi-format Support**: Process PDFs, Word documents, and text files
 - **Conversation Memory**: Maintains context across multiple interactions
-- **RAG-Enhanced Accuracy**: Retrieves relevant immigration law information
+- **RAG-Enhanced Accuracy**: Retrieves relevant immigration law information for precise responses
 
 ## 🏢 Multi-tenant Features
 
@@ -152,29 +193,38 @@ Once the server is running, visit http://localhost:3000/api for interactive Swag
 ### Key Endpoints
 
 #### Public Endpoints
+
 - `POST /companies/register-vendor` - Register a new vendor company
 - `GET /health` - Health check endpoint
 - `GET /config` - Get client configuration
 
 #### Authentication
+
 - `POST /auth/signup` - Create a new user account
 - `GET /auth/user` - Get authenticated user data
 - `GET /users/me` - Get authenticated user profile
 
 #### Company Management
+
 - `GET /company` - Get current user's company info
 - `GET /admin/companies` - List companies with filtering (admin only)
 - `POST /companies/:companyId/users` - Add user to company
 - `GET /companies/:companyId/users` - Get company users
 
 #### Team Management
+
 - `POST /teams` - Create a new team
 - `GET /teams` - List teams with pagination
 - `POST /teams/:teamId/members` - Add members to team
 - `DELETE /teams/:teamId` - Delete a team
 
 #### AI Chat
+
 - `POST /chat/eb-2` - EB-2 NIW consultation with document analysis (handles both text questions and file uploads)
+  - Powered by `langchain.service.ts` with Google Gemini 2.0
+  - Advanced prompt engineering for immigration expertise
+  - Document validation with structured JSON responses
+  - Confidence scoring for response reliability
 
 ## 🤝 Contributing
 
