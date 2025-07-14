@@ -1,0 +1,90 @@
+[
+  [
+    [
+      "328e6c84-0579-49cf-92d2-3fc2bb18db31",
+      {
+        "pageContent": "# EB-2 Visa Knowledge Base\n\n## Overview\n\nThe EB-2 visa is an employment-based, second preference immigration category for foreign nationals with advanced degrees or exceptional ability. There are three subcategories:\n\n1. **EB-2A**: Advanced Degree Professional\n2. **EB-2B**: Exceptional Ability\n3. **EB-2C**: National Interest Waiver (NIW)\n\n## EB-2A: Advanced Degree Professional\n\n### Requirements:\n- The job must require an advanced degree (or foreign equivalent)\n- The beneficiary must possess such a degree\n- Advanced degree means: U.S. master's degree or higher, OR bachelor's degree plus 5 years of progressive experience\n\n### Documentation Required:\n- Educational credentials evaluation\n- Transcripts and diplomas\n- Experience letters detailing progressive responsibility\n- Job offer letter specifying advanced degree requirement",
+        "metadata": {
+          "source": "/Users/joshuasardinha/Documents/Development/acme/acme_server/src/modules/chat/knowledge-base/eb2-visa-knowledge.md",
+          "chunk": 0,
+          "loc": { "lines": { "from": 1, "to": 22 } }
+        }
+      }
+    ],
+    [
+      "6e75a44e-5c9a-4581-98ff-ae00277982ae",
+      {
+        "pageContent": "## EB-2B: Exceptional Ability\n\n### Requirements:\nMust meet at least 3 of the following criteria:\n1. Official academic record showing degree relating to the area of exceptional ability\n2. Letters documenting at least 10 years of full-time experience\n3. License to practice the profession\n4. Evidence of salary/remuneration demonstrating exceptional ability\n5. Membership in professional associations\n6. Recognition for achievements and significant contributions\n\n### Documentation Required:\n- Evidence supporting at least 3 criteria\n- Detailed letters from employers/experts\n- Awards, publications, or media coverage\n- Professional licenses or certifications",
+        "metadata": {
+          "source": "/Users/joshuasardinha/Documents/Development/acme/acme_server/src/modules/chat/knowledge-base/eb2-visa-knowledge.md",
+          "chunk": 1,
+          "loc": { "lines": { "from": 24, "to": 39 } }
+        }
+      }
+    ],
+    [
+      "9af992ab-96fe-4840-a7d2-2e2193bac20e",
+      {
+        "pageContent": "## EB-2C: National Interest Waiver (NIW)\n\n### Three-Prong Test (Matter of Dhanasar):\n\n#### Prong 1: Substantial Merit and National Importance\n- The endeavor must have substantial merit\n- The endeavor must be of national importance\n- Can be in business, entrepreneurialism, science, technology, culture, health, or education\n\n#### Prong 2: Well-Positioned to Advance the Endeavor\n- Education, skills, knowledge, and record of success\n- Past achievements and future plans\n- Progress toward achieving the endeavor\n- Interest from investors, customers, or other relevant entities\n\n#### Prong 3: Beneficial to Waive Job Offer Requirement\n- Impractical for the beneficiary to secure a job offer\n- Benefit to the U.S. outweighs the labor certification process\n- U.S. would benefit from the beneficiary's contributions",
+        "metadata": {
+          "source": "/Users/joshuasardinha/Documents/Development/acme/acme_server/src/modules/chat/knowledge-base/eb2-visa-knowledge.md",
+          "chunk": 2,
+          "loc": { "lines": { "from": 41, "to": 59 } }
+        }
+      }
+    ],
+    [
+      "f4972099-a707-4178-93ed-44415f63a23e",
+      {
+        "pageContent": "### NIW Documentation Requirements:\n1. **Detailed Personal Statement** covering:\n   - Description of the proposed endeavor\n   - How it has substantial merit and national importance\n   - Qualifications and achievements\n   - Future plans and how they benefit the U.S.\n\n2. **Supporting Evidence**:\n   - Letters of recommendation (5-7 recommended)\n   - Publications and citations\n   - Patents or innovations\n   - Media coverage\n   - Awards and honors\n   - Conference presentations\n   - Evidence of implementation or adoption of work\n\n3. **Business/Research Plan** (if applicable):\n   - Detailed plan for the endeavor\n   - Timeline and milestones\n   - Potential impact and beneficiaries\n   - Funding or resources available",
+        "metadata": {
+          "source": "/Users/joshuasardinha/Documents/Development/acme/acme_server/src/modules/chat/knowledge-base/eb2-visa-knowledge.md",
+          "chunk": 3,
+          "loc": { "lines": { "from": 61, "to": 81 } }
+        }
+      }
+    ],
+    [
+      "4a02debd-8ed3-40b0-9ec8-d9a33b3ad313",
+      {
+        "pageContent": "## Form I-140 Petition\n\n### Key Requirements:\n- Must be filed by employer (except for NIW)\n- Priority date established upon filing\n- Premium processing available (15 calendar days)\n\n### Supporting Documents:\n1. Form I-140 properly completed\n2. Filing fee payment\n3. Labor certification (if required)\n4. Evidence of ability to pay (for employer petitions)\n5. All supporting documentation for the specific category\n\n## Common RFE (Request for Evidence) Issues\n\n### For EB-2A:\n- Insufficient evidence of progressive experience\n- Degree equivalency not properly established\n- Job requirements not clearly requiring advanced degree\n\n### For EB-2B:\n- Weak evidence for exceptional ability criteria\n- Lack of objective evidence\n- Insufficient documentation of achievements\n\n### For NIW:\n- Endeavor not clearly defined\n- National importance not established\n- Insufficient evidence of being well-positioned\n- Weak argument for waiving job offer requirement",
+        "metadata": {
+          "source": "/Users/joshuasardinha/Documents/Development/acme/acme_server/src/modules/chat/knowledge-base/eb2-visa-knowledge.md",
+          "chunk": 4,
+          "loc": { "lines": { "from": 83, "to": 113 } }
+        }
+      }
+    ],
+    [
+      "2a303d96-676d-4321-9900-65dc189dcdbd",
+      {
+        "pageContent": "## Processing Times and Priority Dates\n\n- I-140 Regular Processing: 6-12 months\n- I-140 Premium Processing: 15 calendar days\n- Priority dates vary by country of birth\n- Check visa bulletin for current priority dates\n\n## Tips for Strong Applications\n\n1. **Quality over Quantity**: Focus on strong, relevant evidence\n2. **Expert Letters**: Get detailed letters from recognized experts\n3. **Clear Narrative**: Tell a compelling story about qualifications and contributions\n4. **Objective Evidence**: Support claims with measurable achievements\n5. **Future Impact**: Clearly articulate future plans and benefits to the U.S.\n6. **Professional Presentation**: Organize documents logically with clear labels\n\n## Recent Policy Updates\n\n- Matter of Dhanasar (2016) established current NIW framework\n- USCIS policy manual provides detailed guidance\n- COVID-19 related flexibilities for certain requirements\n- Emphasis on STEM fields for national interest",
+        "metadata": {
+          "source": "/Users/joshuasardinha/Documents/Development/acme/acme_server/src/modules/chat/knowledge-base/eb2-visa-knowledge.md",
+          "chunk": 5,
+          "loc": { "lines": { "from": 115, "to": 136 } }
+        }
+      }
+    ],
+    [
+      "71a53cf1-9e65-4596-a655-d68c002e1c33",
+      {
+        "pageContent": "## Maintaining Status\n\n- Must maintain lawful status throughout the process\n- Can file I-485 when priority date is current\n- AC21 provisions allow job portability after 180 days\n- Travel restrictions apply during adjustment of status",
+        "metadata": {
+          "source": "/Users/joshuasardinha/Documents/Development/acme/acme_server/src/modules/chat/knowledge-base/eb2-visa-knowledge.md",
+          "chunk": 6,
+          "loc": { "lines": { "from": 138, "to": 143 } }
+        }
+      }
+    ]
+  ],
+  {
+    "0": "328e6c84-0579-49cf-92d2-3fc2bb18db31",
+    "1": "6e75a44e-5c9a-4581-98ff-ae00277982ae",
+    "2": "9af992ab-96fe-4840-a7d2-2e2193bac20e",
+    "3": "f4972099-a707-4178-93ed-44415f63a23e",
+    "4": "4a02debd-8ed3-40b0-9ec8-d9a33b3ad313",
+    "5": "2a303d96-676d-4321-9900-65dc189dcdbd",
+    "6": "71a53cf1-9e65-4596-a655-d68c002e1c33"
+  }
+]

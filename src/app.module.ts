@@ -20,6 +20,7 @@ import { RoleModule } from './modules/role/role.module';
 import { TeamMember } from './modules/team/entities/team-member.entity';
 import { Team } from './modules/team/entities/team.entity';
 import { TeamModule } from './modules/team/team.module';
+import { ChatModule } from './modules/chat/chat.module';
 
 @Module({
   imports: [
@@ -105,6 +106,7 @@ import { TeamModule } from './modules/team/team.module';
     AccessControlModule,
     HealthModule,
     ConfigsModule,
+    ChatModule,
   ],
   controllers: [],
   providers: [
