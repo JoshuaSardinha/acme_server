@@ -46,7 +46,7 @@ describe('AcmeProtectionService', () => {
       }).toThrow(new ForbiddenException(ACME_ERRORS.CANNOT_CHANGE_TYPE));
     });
 
-    it('should throw BadRequestException when trying to set NATIONAL_NINER type on other company', () => {
+    it('should throw BadRequestException when trying to set ACME type on other company', () => {
       expect(() => {
         service.validateCompanyTypeChange('other-company-id', CompanyType.ACME, CompanyType.VENDOR);
       }).toThrow(new BadRequestException(ACME_ERRORS.ONLY_ACME_TYPE));
@@ -96,7 +96,7 @@ describe('AcmeProtectionService', () => {
   });
 
   describe('validateCompanyCreation', () => {
-    it('should throw BadRequestException when trying to create another NATIONAL_NINER type company', () => {
+    it('should throw BadRequestException when trying to create another ACME type company', () => {
       expect(() => {
         service.validateCompanyCreation({
           type: CompanyType.ACME,

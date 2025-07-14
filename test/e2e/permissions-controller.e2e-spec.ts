@@ -91,8 +91,8 @@ describe('PermissionsController (e2e)', () => {
     // Create standard roles first
     await createStandardRoles();
 
-    // Ensure National Niner company exists
-    const nationalNinerCompany = await ensureAcmeCompanyExists();
+    // Ensure Acme company exists
+    const acmeCompany = await ensureAcmeCompanyExists();
 
     // Create test company
     testCompany = await createTestCompany({

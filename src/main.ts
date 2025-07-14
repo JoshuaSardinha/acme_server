@@ -30,8 +30,8 @@ async function bootstrap() {
 
   // Swagger documentation setup
   const config = new DocumentBuilder()
-    .setTitle('National Niner API')
-    .setDescription('Backend API for National Niner Application')
+    .setTitle('Acme API')
+    .setDescription('Backend API for Acme Application')
     .setVersion('1.0')
     .addBearerAuth()
     .build();

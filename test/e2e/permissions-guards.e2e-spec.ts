@@ -76,8 +76,8 @@ describe('Permission Guards Integration (E2E)', () => {
     // Create standard roles first
     await createStandardRoles();
 
-    // Ensure National Niner company exists
-    const nationalNinerCompany = await ensureAcmeCompanyExists();
+    // Ensure Acme company exists
+    const acmeCompany = await ensureAcmeCompanyExists();
 
     // Create test companies
     testCompany = await createTestCompany({

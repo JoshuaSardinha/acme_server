@@ -54,8 +54,8 @@ module.exports = {
         'client',
         'vendor_employee',
         'vendor_admin',
-        'national_niner_employee',
-        'national_niner_admin'
+        'acme_employee',
+        'acme_admin'
       ),
       allowNull: false,
       defaultValue: 'client',
@@ -169,13 +169,13 @@ module.exports = {
       }
     );
 
-    // Insert National Niner Company
+    // Insert Acme Company
     await queryInterface.bulkInsert('Companies', [
       {
         id: '82ed6abb-a2cd-4384-b62f-1c90a685831f',
-        name: 'National Niner',
-        address: '123 National Ave, Capital City',
-        email: 'contact@nationalniner.com',
+        name: 'Acme',
+        address: '123 Acme Ave, Capital City',
+        email: 'contact@acme.com',
         phone_number: '123-456-7890',
         created_at: new Date(),
         updated_at: new Date(),
@@ -184,11 +184,57 @@ module.exports = {
   },
 
   async down(queryInterface, Sequelize) {
-    await queryInterface.dropTable('TeamMembers', { cascade: true });
-    await queryInterface.dropTable('Teams', { cascade: true });
-    await queryInterface.removeColumn('Users', 'company_id');
-    await queryInterface.removeColumn('Users', 'is_lawyer');
-    await queryInterface.removeColumn('Users', 'role');
-    await queryInterface.dropTable('Companies', { cascade: true });
+    await queryInterface.sequelize.transaction(async (transaction) => {
+      // Get list of existing tables
+      const tables = await queryInterface.showAllTables();
+      
+      // Drop tables if they exist (in reverse order due to foreign key dependencies)
+      if (tables.includes('TeamMembers')) {
+        console.log("Dropping 'TeamMembers' table...");
+        await queryInterface.dropTable('TeamMembers', { cascade: true, transaction });
+      } else {
+        console.log("'TeamMembers' table does not exist, skipping drop.");
+      }
+      
+      if (tables.includes('Teams')) {
+        console.log("Dropping 'Teams' table...");
+        await queryInterface.dropTable('Teams', { cascade: true, transaction });
+      } else {
+        console.log("'Teams' table does not exist, skipping drop.");
+      }
+      
+      // Get current Users table structure before removing columns
+      const userTableDescription = await queryInterface.describeTable('Users');
+      
+      // Remove columns from Users table if they exist
+      if (userTableDescription.company_id) {
+        console.log("Removing 'company_id' column from Users table...");
+        await queryInterface.removeColumn('Users', 'company_id', { transaction });
+      } else {
+        console.log("'company_id' column does not exist in Users table, skipping removal.");
+      }
+      
+      if (userTableDescription.is_lawyer) {
+        console.log("Removing 'is_lawyer' column from Users table...");
+        await queryInterface.removeColumn('Users', 'is_lawyer', { transaction });
+      } else {
+        console.log("'is_lawyer' column does not exist in Users table, skipping removal.");
+      }
+      
+      if (userTableDescription.role) {
+        console.log("Removing 'role' column from Users table...");
+        await queryInterface.removeColumn('Users', 'role', { transaction });
+      } else {
+        console.log("'role' column does not exist in Users table, skipping removal.");
+      }
+      
+      // Drop Companies table if it exists
+      if (tables.includes('Companies')) {
+        console.log("Dropping 'Companies' table...");
+        await queryInterface.dropTable('Companies', { cascade: true, transaction });
+      } else {
+        console.log("'Companies' table does not exist, skipping drop.");
+      }
+    });
   },
 };

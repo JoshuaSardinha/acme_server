@@ -51,7 +51,7 @@ describe('Data Integrity Validation - Task 2.1 Constraint Testing', () => {
       port: parseInt(process.env.DB_PORT || '3306'),
       username: process.env.DB_USER || 'root',
       password: process.env.DB_PASS || '',
-      database: process.env.DB_NAME_TEST || 'national_niner_test',
+      database: process.env.DB_NAME_TEST || 'acme_test',
       logging: false,
       models: [Company, Team, TeamMember, User],
     });

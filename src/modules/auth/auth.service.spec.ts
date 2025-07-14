@@ -203,7 +203,7 @@ describe('AuthService', () => {
       expect(mockedAxios.post).toHaveBeenCalledWith(
         'https://test.auth0.com/api/v2/users',
         {
-          connection: 'NationalNiner-DB',
+          connection: 'Acme-DB',
           email: 'john@example.com',
           password: 'Password123!',
           user_metadata: {

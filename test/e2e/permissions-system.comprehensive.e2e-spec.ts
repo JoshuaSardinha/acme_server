@@ -119,7 +119,7 @@ describe('Permission System - Comprehensive E2E Tests', () => {
     // Create standard roles first (like the working test)
     await createStandardRoles();
 
-    // Ensure National Niner company exists
+    // Ensure Acme company exists
     await ensureAcmeCompanyExists();
 
     // Create test companies for multi-tenant scenarios

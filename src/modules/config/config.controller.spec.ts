@@ -9,7 +9,7 @@ describe('ConfigController', () => {
 
   const mockClientConfig: ClientConfigDto = {
     auth0Domain: 'dev-test.us.auth0.com',
-    apiAudience: 'https://api.nationalniner.com',
+    apiAudience: 'https://api.acme.com',
     auth0ClientId: 'test_client_id',
     minIosVersion: '1.0.0',
     minAndroidVersion: '1.0.0',

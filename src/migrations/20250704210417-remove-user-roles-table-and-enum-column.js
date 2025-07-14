@@ -36,25 +36,36 @@ module.exports = {
     await queryInterface.sequelize.transaction(async (transaction) => {
       console.log('Restoring UserRoles table and role enum column...');
       
-      // 1. Add back the role enum column
-      await queryInterface.addColumn('Users', 'role', {
-        type: Sequelize.ENUM(
-          'client',
-          'vendor_employee',
-          'vendor_admin',
-          'national_niner_employee',
-          'national_niner_admin',
-          'vendor_manager',
-          'national_niner_manager',
-          'team_member',
-          'super_admin'
-        ),
-        allowNull: false,
-        defaultValue: 'client'
-      }, { transaction });
+      // Get current table structure
+      const userTableDescription = await queryInterface.describeTable('Users');
+      const tables = await queryInterface.showAllTables();
+      
+      // 1. Add back the role enum column if it doesn't exist
+      if (!userTableDescription.role) {
+        console.log("Adding back 'role' enum column to Users table...");
+        await queryInterface.addColumn('Users', 'role', {
+          type: Sequelize.ENUM(
+            'client',
+            'vendor_employee',
+            'vendor_admin',
+            'acme_employee',
+            'acme_admin',
+            'vendor_manager',
+            'acme_manager',
+            'team_member',
+            'super_admin'
+          ),
+          allowNull: false,
+          defaultValue: 'client'
+        }, { transaction });
+      } else {
+        console.log("'role' column already exists in Users table, skipping addition.");
+      }
 
-      // 2. Recreate UserRoles table
-      await queryInterface.createTable('UserRoles', {
+      // 2. Recreate UserRoles table if it doesn't exist
+      if (!tables.includes('UserRoles')) {
+        console.log("Creating UserRoles table...");
+        await queryInterface.createTable('UserRoles', {
         id: {
           type: Sequelize.UUID,
           defaultValue: Sequelize.UUIDV4,
@@ -106,17 +117,20 @@ module.exports = {
           allowNull: false,
           defaultValue: Sequelize.fn('NOW'),
         },
-      }, { transaction });
+        }, { transaction });
 
-      // Add indexes back
-      await queryInterface.addIndex('UserRoles', ['user_id', 'role_id'], {
-        unique: true,
-        name: 'unique_user_role',
-        transaction
-      });
-      await queryInterface.addIndex('UserRoles', ['user_id'], { transaction });
-      await queryInterface.addIndex('UserRoles', ['role_id'], { transaction });
-      await queryInterface.addIndex('UserRoles', ['granted_by'], { transaction });
+        // Add indexes back
+        await queryInterface.addIndex('UserRoles', ['user_id', 'role_id'], {
+          unique: true,
+          name: 'unique_user_role',
+          transaction
+        });
+        await queryInterface.addIndex('UserRoles', ['user_id'], { transaction });
+        await queryInterface.addIndex('UserRoles', ['role_id'], { transaction });
+        await queryInterface.addIndex('UserRoles', ['granted_by'], { transaction });
+      } else {
+        console.log("UserRoles table already exists, skipping creation.");
+      }
 
       // 3. Make role_id nullable again (for backward compatibility)
       await queryInterface.changeColumn('Users', 'role_id', {

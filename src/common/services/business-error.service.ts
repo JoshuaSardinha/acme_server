@@ -221,7 +221,7 @@ export class BusinessErrorService {
 
       case 'PERMISSION_DENIED':
         return this.createPermissionError(
-          'Insufficient permissions to modify team membership. Only team managers, company owners, or National Niner employees can perform this operation.',
+          'Insufficient permissions to modify team membership. Only team managers, company owners, or Acme employees can perform this operation.',
           context
         );
 

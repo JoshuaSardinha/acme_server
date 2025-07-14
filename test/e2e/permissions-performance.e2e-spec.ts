@@ -90,7 +90,7 @@ describe('Permission System Performance (E2E)', () => {
       // Create standard roles first
       await createStandardRoles();
 
-      // Ensure National Niner company exists
+      // Ensure Acme company exists
       await ensureAcmeCompanyExists();
 
       // Reset performance metrics

@@ -12,8 +12,8 @@ import { JwtAuthGuard } from '../../src/core/guards/jwt-auth.guard';
 // Test utilities
 import { authHelper } from '../auth/auth.helper';
 import { MockJwtAuthGuard } from '../auth/mock-jwt-auth.guard';
-import { createTestCompany } from '../factories/company.factory';
 import { ensureAcmeCompanyExists, getAcmeCompanyId } from '../factories/acme-company.factory';
+import { createTestCompany } from '../factories/company.factory';
 import { createStandardRoles, getRoleByCode } from '../factories/role.factory';
 import { createTestUser } from '../factories/user.factory';
 import { DbCleanerService } from '../utils/db-cleaner.service';
@@ -39,19 +39,19 @@ describe('GET /auth/user (E2E)', () => {
   // Test data
   let testCompany1: Company;
   let testCompany2: Company;
-  let nationalNinerCompany: Company;
+  let acmeCompany: Company;
   let testUser1: User;
   let testUser2: User;
   let adminUser: User;
   let lawyerUser: User;
-  let nnAdminUser: User;
+  let acmeAdminUser: User;
 
   // Mock auth tokens
   let validToken1: string;
   let validToken2: string;
   let adminToken: string;
   let lawyerToken: string;
-  let nnAdminToken: string;
+  let acmeAdminToken: string;
   let invalidToken: string;
   let expiredToken: string;
 
@@ -89,8 +89,8 @@ describe('GET /auth/user (E2E)', () => {
     // Create standard roles first
     await createStandardRoles();
 
-    // Ensure National Niner company exists
-    nationalNinerCompany = await ensureAcmeCompanyExists();
+    // Ensure Acme company exists
+    acmeCompany = await ensureAcmeCompanyExists();
 
     // Create test companies
     testCompany1 = await createTestCompany({
@@ -158,18 +158,18 @@ describe('GET /auth/user (E2E)', () => {
     // Set lawyer flag after creation
     await lawyerUser.update({ is_lawyer: true });
 
-    // Create National Niner admin user
-    const nnAdminRole = await getRoleByCode('national_niner_admin');
-    if (!nnAdminRole) {
-      throw new Error('National Niner Admin role not found');
+    // Create Acme admin user
+    const acmeAdminRole = await getRoleByCode('acme_admin');
+    if (!acmeAdminRole) {
+      throw new Error('Acme Admin role not found');
     }
 
-    nnAdminUser = await User.create({
-      first_name: 'NN',
+    acmeAdminUser = await User.create({
+      first_name: 'AC',
       last_name: 'Admin',
-      email: 'nn.admin@nationalniner.com',
-      auth0_user_id: 'auth0|nn-admin-auth-test',
-      role_id: nnAdminRole.id,
+      email: 'ac.admin@acme.com',
+      auth0_user_id: 'auth0|ac-admin-auth-test',
+      role_id: acmeAdminRole.id,
       company_id: getAcmeCompanyId(),
     });
 
@@ -204,11 +204,11 @@ describe('GET /auth/user (E2E)', () => {
       permissions: ['LEGAL_ACCESS'],
     });
 
-    nnAdminToken = authHelper.generateToken({
-      sub: nnAdminUser.auth0_user_id,
-      email: nnAdminUser.email,
-      role: 'national_niner_admin',
-      org_id: nnAdminUser.company_id,
+    acmeAdminToken = authHelper.generateToken({
+      sub: acmeAdminUser.auth0_user_id,
+      email: acmeAdminUser.email,
+      role: 'acme_admin',
+      org_id: acmeAdminUser.company_id,
       permissions: ['MANAGE_COMPANIES', 'APPROVE_COMPANIES', 'CREATE_COMPANIES'],
     });
 
@@ -292,22 +292,22 @@ describe('GET /auth/user (E2E)', () => {
       );
     });
 
-    it('should return correct data for National Niner admin user', async () => {
+    it('should return correct data for Acme admin user', async () => {
       const response = await request(app.getHttpServer())
         .get('/auth/user')
-        .set('Authorization', `Bearer ${nnAdminToken}`)
+        .set('Authorization', `Bearer ${acmeAdminToken}`)
         .expect(HttpStatus.OK);
 
       expect(response.body.success).toBe(true);
       expect(response.body.payload).toEqual(
         expect.objectContaining({
-          id: nnAdminUser.id,
+          id: acmeAdminUser.id,
           role: expect.objectContaining({
-            code: 'national_niner_admin',
-            name: 'National Niner Admin',
+            code: 'acme_admin',
+            name: 'Acme Admin',
           }),
-          email: nnAdminUser.email,
-          companyId: nationalNinerCompany.id,
+          email: acmeAdminUser.email,
+          companyId: acmeCompany.id,
         })
       );
     });

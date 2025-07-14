@@ -12,8 +12,8 @@ import { JwtAuthGuard } from '../../src/core/guards/jwt-auth.guard';
 // Test utilities
 import { authHelper } from '../auth/auth.helper';
 import { MockJwtAuthGuard } from '../auth/mock-jwt-auth.guard';
-import { createTestCompany } from '../factories/company.factory';
 import { ensureAcmeCompanyExists, getAcmeCompanyId } from '../factories/acme-company.factory';
+import { createTestCompany } from '../factories/company.factory';
 import { createStandardRoles, getRoleByCode } from '../factories/role.factory';
 import { createTestUser } from '../factories/user.factory';
 import { DbCleanerService } from '../utils/db-cleaner.service';
@@ -29,16 +29,16 @@ describe('CompanyController (e2e)', () => {
 
   // Test data
   let testCompany: Company;
-  let nationalNinerCompany: Company;
+  let acmeCompany: Company;
   let vendorAdminUser: User;
   let clientUser: User;
-  let nnAdminUser: User;
+  let acmeAdminUser: User;
   let userWithoutCompany: User;
 
   // JWT tokens
   let vendorAdminToken: string;
   let clientToken: string;
-  let nnAdminToken: string;
+  let acmeAdminToken: string;
   let noCompanyToken: string;
 
   beforeAll(async () => {
@@ -75,8 +75,8 @@ describe('CompanyController (e2e)', () => {
     // Create standard roles first
     await createStandardRoles();
 
-    // Ensure National Niner company exists
-    nationalNinerCompany = await ensureAcmeCompanyExists();
+    // Ensure Acme company exists
+    acmeCompany = await ensureAcmeCompanyExists();
 
     // Create test company
     testCompany = await createTestCompany({
@@ -94,9 +94,9 @@ describe('CompanyController (e2e)', () => {
     // Create test users with different roles
     const vendorAdminRole = await getRoleByCode('vendor_admin');
     const clientRole = await getRoleByCode('client');
-    const nnAdminRole = await getRoleByCode('national_niner_admin');
+    const acmeAdminRole = await getRoleByCode('acme_admin');
 
-    if (!vendorAdminRole || !clientRole || !nnAdminRole) {
+    if (!vendorAdminRole || !clientRole || !acmeAdminRole) {
       throw new Error('Required roles not found');
     }
 
@@ -116,12 +116,12 @@ describe('CompanyController (e2e)', () => {
       auth0_user_id: 'auth0|client_test',
     });
 
-    nnAdminUser = await User.create({
-      first_name: 'NN',
+    acmeAdminUser = await User.create({
+      first_name: 'AC',
       last_name: 'Admin',
-      email: 'nn.admin@nationalniner.com',
-      auth0_user_id: 'auth0|nn_admin_test',
-      role_id: nnAdminRole.id,
+      email: 'ac.admin@acme.com',
+      auth0_user_id: 'auth0|ac_admin_test',
+      role_id: acmeAdminRole.id,
       company_id: getAcmeCompanyId(),
     });
 
@@ -150,11 +150,11 @@ describe('CompanyController (e2e)', () => {
       org_id: clientUser.company_id,
     });
 
-    nnAdminToken = authHelper.generateToken({
-      sub: nnAdminUser.auth0_user_id,
-      email: nnAdminUser.email,
-      role: 'national_niner_admin',
-      org_id: nnAdminUser.company_id,
+    acmeAdminToken = authHelper.generateToken({
+      sub: acmeAdminUser.auth0_user_id,
+      email: acmeAdminUser.email,
+      role: 'acme_admin',
+      org_id: acmeAdminUser.company_id,
     });
 
     noCompanyToken = authHelper.generateToken({
@@ -193,19 +193,19 @@ describe('CompanyController (e2e)', () => {
       );
     });
 
-    it('should return company info for National Niner admin user', async () => {
+    it('should return company info for Acme admin user', async () => {
       const response = await request(app.getHttpServer())
         .get('/company')
-        .set('Authorization', `Bearer ${nnAdminToken}`)
+        .set('Authorization', `Bearer ${acmeAdminToken}`)
         .expect(200);
 
       expect(response.body).toEqual(
         expect.objectContaining({
-          id: nationalNinerCompany.id,
-          name: nationalNinerCompany.name,
-          email: nationalNinerCompany.email,
-          type: nationalNinerCompany.type,
-          status: nationalNinerCompany.status,
+          id: acmeCompany.id,
+          name: acmeCompany.name,
+          email: acmeCompany.email,
+          type: acmeCompany.type,
+          status: acmeCompany.status,
         })
       );
     });

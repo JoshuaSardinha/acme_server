@@ -119,10 +119,10 @@ describe('UserService', () => {
             findOne: jest.fn().mockImplementation((options) => {
               const code = options.where?.code;
               const roleMap = {
-                national_niner_admin: {
+                acme_admin: {
                   id: 'role-nna',
                   name: 'Acme Admin',
-                  code: 'national_niner_admin',
+                  code: 'acme_admin',
                 },
                 vendor_employee: {
                   id: 'role-ve',
@@ -133,15 +133,15 @@ describe('UserService', () => {
                 client: { id: 'role-client', name: 'Client', code: 'client' },
                 super_admin: { id: 'role-sa', name: 'Super Admin', code: 'super_admin' },
                 team_member: { id: 'role-tm', name: 'Team Member', code: 'team_member' },
-                national_niner_manager: {
+                acme_manager: {
                   id: 'role-nnm',
                   name: 'Acme Manager',
-                  code: 'national_niner_manager',
+                  code: 'acme_manager',
                 },
-                national_niner_employee: {
+                acme_employee: {
                   id: 'role-nne',
                   name: 'Acme Employee',
-                  code: 'national_niner_employee',
+                  code: 'acme_employee',
                 },
                 vendor_manager: { id: 'role-vm', name: 'Vendor Manager', code: 'vendor_manager' },
               };
@@ -187,7 +187,7 @@ describe('UserService', () => {
 
   describe('acmeInvite', () => {
     const inviteDto: AcmeInviteDto = {
-      email: 'admin@nationalniner.com',
+      email: 'admin@acme.com',
       role: UserRole.ACME_ADMIN,
       first_name: 'John',
       last_name: 'Doe',
@@ -214,7 +214,7 @@ describe('UserService', () => {
           auth0_user_id: 'auth0|123',
           email: inviteDto.email,
           role_id: expect.any(String),
-          company_id: 'nn-company-id',
+          company_id: 'acme-company-id',
           first_name: inviteDto.first_name,
           last_name: inviteDto.last_name,
         }),
@@ -223,7 +223,7 @@ describe('UserService', () => {
       expect(authService.createAuth0User).toHaveBeenCalled();
       expect(authService.sendPasswordResetEmail).toHaveBeenCalled();
       expect(result.email).toBe(inviteDto.email);
-      expect(result.company_id).toBe('nn-company-id');
+      expect(result.company_id).toBe('acme-company-id');
       expect(result.auth0_user_id).toBe('auth0|123');
     });
 

@@ -49,7 +49,7 @@ describe('Migration Testing Tools - Task 2.1 Database Schema Evolution', () => {
   let _originalSchema: SchemaSnapshot;
 
   const MIGRATION_DIR = path.join(process.cwd(), 'migrations');
-  const TEST_DB_NAME = process.env.DB_NAME_TEST || 'national_niner_test';
+  const TEST_DB_NAME = process.env.DB_NAME_TEST || 'acme_test';
 
   beforeAll(async () => {
     module = await Test.createTestingModule({

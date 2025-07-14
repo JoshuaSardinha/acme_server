@@ -70,8 +70,8 @@ describe('Performance Validation and Index Testing for Task 2.1', () => {
     // Create standard roles first
     await createStandardRoles();
     
-    // Ensure National Niner company exists
-    await ensureNationalNinerCompanyExists();
+    // Ensure Acme company exists
+    await ensureAcmeCompanyExists();
   });
 
   afterAll(async () => {

@@ -8,10 +8,10 @@ module.exports = {
         'client',
         'vendor_employee',
         'vendor_admin',
-        'national_niner_employee',
-        'national_niner_admin',
+        'acme_employee',
+        'acme_admin',
         'vendor_manager',
-        'national_niner_manager'
+        'acme_manager'
       ),
       allowNull: false,
     });
@@ -23,8 +23,8 @@ module.exports = {
         'client',
         'vendor_employee',
         'vendor_admin',
-        'national_niner_employee',
-        'national_niner_admin'
+        'acme_employee',
+        'acme_admin'
       ),
       allowNull: false,
     });

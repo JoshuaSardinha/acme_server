@@ -15,8 +15,8 @@ import { TeamAccessGuard, TeamManagerGuard } from '../../src/core/guards/team-ac
 // Test utilities
 import { authHelper } from '../auth/auth.helper';
 import { MockJwtAuthGuard } from '../auth/mock-jwt-auth.guard';
-import { createTestCompany } from '../factories/company.factory';
 import { ensureAcmeCompanyExists, getAcmeCompanyId } from '../factories/acme-company.factory';
+import { createTestCompany } from '../factories/company.factory';
 import { createStandardRoles, getRoleByCode } from '../factories/role.factory';
 import { DbCleanerService } from '../utils/db-cleaner.service';
 
@@ -91,7 +91,7 @@ describe('Teams Module (E2E)', () => {
     // Create standard roles first
     await createStandardRoles();
 
-    // Ensure National Niner company exists
+    // Ensure Acme company exists
     await ensureAcmeCompanyExists();
 
     // Create companies, users, and tokens fresh for each test
@@ -116,21 +116,21 @@ describe('Teams Module (E2E)', () => {
     });
 
     // Get roles using factory
-    const nnAdminRole = await getRoleByCode('national_niner_admin');
+    const acmeAdminRole = await getRoleByCode('acme_admin');
     const vendorAdminRole = await getRoleByCode('vendor_admin');
     const vendorEmployeeRole = await getRoleByCode('vendor_employee');
 
-    if (!nnAdminRole || !vendorAdminRole || !vendorEmployeeRole) {
+    if (!acmeAdminRole || !vendorAdminRole || !vendorEmployeeRole) {
       throw new Error('Required roles not found');
     }
 
     // Create test users with different roles
-    const nnAdmin = await User.create({
-      first_name: 'NN',
+    const acmeAdmin = await User.create({
+      first_name: 'AC',
       last_name: 'Admin',
-      email: 'nn.admin@nationalniner.com',
-      auth0_user_id: 'auth0|nn-admin',
-      role_id: nnAdminRole.id,
+      email: 'ac.admin@acme.com',
+      auth0_user_id: 'auth0|ac-admin',
+      role_id: acmeAdminRole.id,
       company_id: getAcmeCompanyId(),
       is_lawyer: false,
     });
@@ -186,11 +186,11 @@ describe('Teams Module (E2E)', () => {
     });
 
     // Generate auth tokens using authHelper
-    const nnAdminToken = authHelper.generateToken({
-      sub: nnAdmin.auth0_user_id,
-      email: nnAdmin.email,
-      role: 'national_niner_admin',
-      org_id: nnAdmin.company_id,
+    const acmeAdminToken = authHelper.generateToken({
+      sub: acmeAdmin.auth0_user_id,
+      email: acmeAdmin.email,
+      role: 'acme_admin',
+      org_id: acmeAdmin.company_id,
       permissions: ['MANAGE_COMPANIES', 'APPROVE_COMPANIES', 'CREATE_COMPANIES'],
     });
 
@@ -234,9 +234,9 @@ describe('Teams Module (E2E)', () => {
 
     return {
       companies: { company1, company2 },
-      users: { nnAdmin, vendorAdmin1, vendorAdmin2, lawyerUser, regularUser, userWithTask },
+      users: { acmeAdmin, vendorAdmin1, vendorAdmin2, lawyerUser, regularUser, userWithTask },
       tokens: {
-        nnAdminToken,
+        acmeAdminToken,
         vendorAdmin1Token,
         vendorAdmin2Token,
         lawyerToken,
@@ -277,7 +277,7 @@ describe('Teams Module (E2E)', () => {
         .expect(HttpStatus.NOT_FOUND);
     });
 
-    it('should allow NN_ADMIN to access any team', async () => {
+    it('should allow AC_ADMIN to access any team', async () => {
       const { companies, users, tokens } = testContext;
 
       // Create teams in different companies
@@ -295,15 +295,15 @@ describe('Teams Module (E2E)', () => {
         category: TeamCategory.CONVENTIONAL,
       });
 
-      // NN_ADMIN should be able to access both
+      // AC_ADMIN should be able to access both
       await request(app.getHttpServer())
         .get(`/teams/${team1.id}`)
-        .set('Authorization', `Bearer ${tokens.nnAdminToken}`)
+        .set('Authorization', `Bearer ${tokens.acmeAdminToken}`)
         .expect(HttpStatus.OK);
 
       await request(app.getHttpServer())
         .get(`/teams/${team2.id}`)
-        .set('Authorization', `Bearer ${tokens.nnAdminToken}`)
+        .set('Authorization', `Bearer ${tokens.acmeAdminToken}`)
         .expect(HttpStatus.OK);
     });
 
@@ -334,12 +334,12 @@ describe('Teams Module (E2E)', () => {
     };
 
     describe('✅ Success Scenarios', () => {
-      it('should allow NN_ADMIN to create team for any company', async () => {
+      it('should allow AC_ADMIN to create team for any company', async () => {
         const { companies, users, tokens } = testContext;
 
         const teamData = {
           ...createTeamDto,
-          name: 'NN Admin Team',
+          name: 'AC Admin Team',
           ownerUserId: users.vendorAdmin2.id,
           memberIds: [users.vendorAdmin2.id],
           companyId: companies.company2.id,
@@ -347,13 +347,13 @@ describe('Teams Module (E2E)', () => {
 
         const response = await request(app.getHttpServer())
           .post('/teams')
-          .set('Authorization', `Bearer ${tokens.nnAdminToken}`)
+          .set('Authorization', `Bearer ${tokens.acmeAdminToken}`)
           .send(teamData)
           .expect(HttpStatus.CREATED);
 
         expect(response.body).toEqual(
           expect.objectContaining({
-            name: 'NN Admin Team',
+            name: 'AC Admin Team',
             category: TeamCategory.CONVENTIONAL,
             id: expect.any(String),
           })
@@ -424,7 +424,7 @@ describe('Teams Module (E2E)', () => {
 
         const response = await request(app.getHttpServer())
           .post('/teams')
-          .set('Authorization', `Bearer ${tokens.nnAdminToken}`)
+          .set('Authorization', `Bearer ${tokens.acmeAdminToken}`)
           .send(invalidData)
           .expect(HttpStatus.BAD_REQUEST);
 
@@ -519,7 +519,7 @@ describe('Teams Module (E2E)', () => {
   // ============================================================================
   describe('📖 GET /teams', () => {
     describe('✅ Success Scenarios', () => {
-      it('should allow NN_ADMIN to see all teams from all companies', async () => {
+      it('should allow AC_ADMIN to see all teams from all companies', async () => {
         const { companies, users, tokens } = testContext;
 
         // Seed teams for both companies
@@ -544,7 +544,7 @@ describe('Teams Module (E2E)', () => {
 
         const response = await request(app.getHttpServer())
           .get('/teams')
-          .set('Authorization', `Bearer ${tokens.nnAdminToken}`)
+          .set('Authorization', `Bearer ${tokens.acmeAdminToken}`)
           .expect(HttpStatus.OK);
 
         expect(response.body.data).toHaveLength(3);

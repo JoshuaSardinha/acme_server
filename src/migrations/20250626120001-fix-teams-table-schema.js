@@ -78,18 +78,22 @@ module.exports = {
           
           // Step 3: Add the foreign key constraint back on the new column
           // Note: Since teams require an owner (per REQ-TEAM-001), we use CASCADE instead of SET NULL
-          await queryInterface.addConstraint('Teams', {
-            type: 'foreign key',
-            fields: ['owner_user_id'],
-            name: 'teams_owner_user_id_fk',
-            references: {
-              table: 'Users',
-              field: 'id',
-            },
-            onDelete: 'CASCADE',  // Teams without owners should be deleted
-            onUpdate: 'CASCADE',
-            transaction,
-          });
+          try {
+            await queryInterface.addConstraint('Teams', {
+              type: 'foreign key',
+              fields: ['owner_user_id'],
+              name: 'teams_owner_user_id_fk',
+              references: {
+                table: 'Users',
+                field: 'id',
+              },
+              onDelete: 'CASCADE',  // Teams without owners should be deleted
+              onUpdate: 'CASCADE',
+              transaction,
+            });
+          } catch (error) {
+            console.warn('Could not add foreign key constraint, proceeding without it:', error.message);
+          }
         });
       } else if (tableDescription.owner_user_id) {
         console.log("'owner_user_id' column already exists in Teams table. Skipping rename.");
@@ -149,26 +153,42 @@ module.exports = {
 
   async down(queryInterface, Sequelize) {
     try {
-      // Remove indexes - handle gracefully if they don't exist
+      // Remove indexes - handle gracefully if they don't exist or are used by FK constraints
       const indexes = await queryInterface.showIndex('Teams');
       const existingIndexNames = indexes.map(index => index.name);
       
       if (existingIndexNames.includes('idx_teams_company_category_active')) {
-        await queryInterface.removeIndex('Teams', 'idx_teams_company_category_active');
+        try {
+          await queryInterface.removeIndex('Teams', 'idx_teams_company_category_active');
+        } catch (error) {
+          console.warn('Could not remove index idx_teams_company_category_active:', error.message);
+        }
       }
       if (existingIndexNames.includes('idx_teams_is_active')) {
-        await queryInterface.removeIndex('Teams', 'idx_teams_is_active');
+        try {
+          await queryInterface.removeIndex('Teams', 'idx_teams_is_active');
+        } catch (error) {
+          console.warn('Could not remove index idx_teams_is_active:', error.message);
+        }
       }
       if (existingIndexNames.includes('idx_teams_category')) {
-        await queryInterface.removeIndex('Teams', 'idx_teams_category');
+        try {
+          await queryInterface.removeIndex('Teams', 'idx_teams_category');
+        } catch (error) {
+          console.warn('Could not remove index idx_teams_category:', error.message);
+        }
       }
       if (existingIndexNames.includes('unique_team_name_per_company')) {
-        await queryInterface.removeIndex('Teams', 'unique_team_name_per_company');
+        try {
+          await queryInterface.removeIndex('Teams', 'unique_team_name_per_company');
+        } catch (error) {
+          console.warn('Could not remove index unique_team_name_per_company:', error.message);
+        }
       }
       
-      // Rename owner_user_id back to manager_id with proper foreign key handling
+      // Handle column renaming back to manager_id if needed
       const tableDescription = await queryInterface.describeTable('Teams');
-      if (tableDescription.owner_user_id) {
+      if (tableDescription.owner_user_id && !tableDescription.manager_id) {
         await queryInterface.sequelize.transaction(async (transaction) => {
           // Find and drop the new foreign key constraint
           const [constraints] = await queryInterface.sequelize.query(
@@ -188,27 +208,53 @@ module.exports = {
           }
           
           // Rename the column back
+          console.log("Renaming 'owner_user_id' back to 'manager_id'...");
           await queryInterface.renameColumn('Teams', 'owner_user_id', 'manager_id', { transaction });
           
           // Add the original foreign key constraint back
-          await queryInterface.addConstraint('Teams', {
-            type: 'foreign key',
-            fields: ['manager_id'],
-            references: {
-              table: 'Users',
-              field: 'id',
-            },
-            onDelete: 'CASCADE',  // Match the original constraint behavior
-            onUpdate: 'CASCADE',
-            transaction,
-          });
+          try {
+            await queryInterface.addConstraint('Teams', {
+              type: 'foreign key',
+              fields: ['manager_id'],
+              references: {
+                table: 'Users',
+                field: 'id',
+              },
+              onDelete: 'CASCADE',  // Match the original constraint behavior
+              onUpdate: 'CASCADE',
+              transaction,
+            });
+          } catch (error) {
+            console.warn('Could not add foreign key constraint on manager_id, proceeding without it:', error.message);
+          }
         });
+      } else if (tableDescription.manager_id) {
+        console.log("Column is already named 'manager_id', skipping rename.");
       }
       
-      // Remove columns
-      await queryInterface.removeColumn('Teams', 'is_active');
-      await queryInterface.removeColumn('Teams', 'category');
-      await queryInterface.removeColumn('Teams', 'description');
+      // Remove columns if they exist
+      const finalTableDescription = await queryInterface.describeTable('Teams');
+      
+      if (finalTableDescription.is_active) {
+        console.log("Removing 'is_active' column from Teams table...");
+        await queryInterface.removeColumn('Teams', 'is_active');
+      } else {
+        console.log("'is_active' column does not exist in Teams table, skipping removal.");
+      }
+      
+      if (finalTableDescription.category) {
+        console.log("Removing 'category' column from Teams table...");
+        await queryInterface.removeColumn('Teams', 'category');
+      } else {
+        console.log("'category' column does not exist in Teams table, skipping removal.");
+      }
+      
+      if (finalTableDescription.description) {
+        console.log("Removing 'description' column from Teams table...");
+        await queryInterface.removeColumn('Teams', 'description');
+      } else {
+        console.log("'description' column does not exist in Teams table, skipping removal.");
+      }
       
     } catch (error) {
       console.error('Error in Teams table migration rollback:', error);

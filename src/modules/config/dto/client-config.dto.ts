@@ -8,7 +8,7 @@ export class ClientConfigDto {
   auth0Domain: string;
 
   @ApiProperty({
-    example: 'https://api.nationalniner.com',
+    example: 'https://api.acme.com',
     description: 'API audience for Auth0',
   })
   apiAudience: string;

@@ -134,8 +134,8 @@ describe('Load Testing Framework - Task 2.1 Performance Under Load', () => {
     // Create standard roles first
     await createStandardRoles();
 
-    // Ensure National Niner company exists
-    await ensureNationalNinerCompanyExists();
+    // Ensure Acme company exists
+    await ensureAcmeCompanyExists();
 
     loadTestResults = [];
   });

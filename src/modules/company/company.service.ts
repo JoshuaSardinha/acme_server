@@ -962,7 +962,7 @@ export class CompanyService {
   }
 
   /**
-   * Delete a company (with National Niner protection)
+   * Delete a company (with Acme protection)
    */
   async deleteCompany(companyId: string, adminUserId: string, reason: string): Promise<void> {
     const transaction = await this.sequelize.transaction();

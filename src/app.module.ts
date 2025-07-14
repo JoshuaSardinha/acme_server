@@ -43,7 +43,7 @@ import { TeamModule } from './modules/team/team.module';
             port: configService.get<number>('DB_PORT', 3306),
             username: configService.get<string>('DB_USER', 'root'),
             password: configService.get<string>('DB_PASSWORD'),
-            database: configService.get<string>('DB_NAME', 'national_niner_dev'),
+            database: configService.get<string>('DB_NAME', 'acme_dev'),
           },
           production: {
             host: configService.get<string>('DB_HOST'),
@@ -57,7 +57,7 @@ import { TeamModule } from './modules/team/team.module';
             port: configService.get<number>('DB_PORT', 3306),
             username: configService.get<string>('DB_USER', 'root'),
             password: configService.get<string>('DB_PASSWORD'),
-            database: configService.get<string>('DB_NAME', 'national_niner_test_db'),
+            database: configService.get<string>('DB_NAME', 'acme_test_db'),
           },
         };
 

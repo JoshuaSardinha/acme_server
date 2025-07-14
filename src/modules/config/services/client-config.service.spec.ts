@@ -18,7 +18,7 @@ describe('ClientConfigService', () => {
       minWebVersion: '1.0.0',
       auth0Domain: 'dev-3jngnvbb08dw5nhq.us.auth0.com',
       auth0IssuerBaseUrl: 'https://dev-3jngnvbb08dw5nhq.us.auth0.com',
-      apiAudience: 'https://api.nationalniner.com',
+      apiAudience: 'https://api.acme.com',
       auth0ClientId: 'vGxKHocnGDiFKqO4kbnltEO0ZP7fawWc',
     },
     test: {
@@ -26,7 +26,7 @@ describe('ClientConfigService', () => {
       minAndroidVersion: '1.0.0',
       minWebVersion: '1.0.0',
       auth0Domain: 'test-auth0.us.auth0.com',
-      apiAudience: 'https://api.test.nationalniner.com',
+      apiAudience: 'https://api.test.acme.com',
       auth0ClientId: 'test_client_id',
     },
   };
@@ -77,7 +77,7 @@ describe('ClientConfigService', () => {
       const config = service.getClientConfig();
       expect(config).toEqual({
         auth0Domain: 'dev-3jngnvbb08dw5nhq.us.auth0.com',
-        apiAudience: 'https://api.nationalniner.com',
+        apiAudience: 'https://api.acme.com',
         auth0ClientId: 'vGxKHocnGDiFKqO4kbnltEO0ZP7fawWc',
         minIosVersion: '1.0.0',
         minAndroidVersion: '1.0.0',
@@ -102,7 +102,7 @@ describe('ClientConfigService', () => {
       const config = service.getClientConfig();
       expect(config).toEqual({
         auth0Domain: 'test-auth0.us.auth0.com',
-        apiAudience: 'https://api.test.nationalniner.com',
+        apiAudience: 'https://api.test.acme.com',
         auth0ClientId: 'test_client_id',
         minIosVersion: '1.0.0',
         minAndroidVersion: '1.0.0',
@@ -173,7 +173,7 @@ describe('ClientConfigService', () => {
       const config = service.getClientConfig();
       expect(config).toBeDefined();
       expect(config.auth0Domain).toBe('test-auth0.us.auth0.com');
-      expect(config.apiAudience).toBe('https://api.test.nationalniner.com');
+      expect(config.apiAudience).toBe('https://api.test.acme.com');
       expect(config.auth0ClientId).toBe('test_client_id');
       expect(config.shouldHealthCheckServer).toBe(true);
     });

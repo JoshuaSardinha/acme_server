@@ -60,8 +60,8 @@ export class BusinessValidationService {
     const validRoles = [
       'Vendor Manager',
       'Vendor Admin',
-      'National Niner Manager',
-      'National Niner Admin',
+      'Acme Manager',
+      'Acme Admin',
     ];
     if (!validRoles.includes(owner.role?.name || '')) {
       throw new BadRequestException('Team owner must be a Manager or Admin role');

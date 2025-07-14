@@ -20,7 +20,7 @@ export class AuthHelper {
     const fullPayload = {
       // Add issuer (iss) and audience (aud) to match real Auth0 config
       iss: 'https://test-domain.auth0.com/',
-      aud: 'national-niner-api',
+      aud: 'acme-api',
       iat: Math.floor(Date.now() / 1000),
       ...payload,
     };

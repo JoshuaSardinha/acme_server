@@ -110,14 +110,34 @@ module.exports = {
 
   async down(queryInterface, Sequelize) {
     try {
-      // Remove indexes
-      await queryInterface.removeIndex('TeamMembers', 'idx_team_members_team_added_at');
-      await queryInterface.removeIndex('TeamMembers', 'idx_team_members_added_by_user_id');
-      await queryInterface.removeIndex('TeamMembers', 'idx_team_members_added_at');
+      // Get existing indexes before attempting to remove them
+      const indexes = await queryInterface.showIndex('TeamMembers');
+      const existingIndexNames = indexes.map(index => index.name);
       
-      // Remove columns
-      await queryInterface.removeColumn('TeamMembers', 'added_by_user_id');
-      await queryInterface.removeColumn('TeamMembers', 'added_at');
+      // Get current table structure before removing columns
+      const tableDescription = await queryInterface.describeTable('TeamMembers');
+      
+      // Remove indexes that don't depend on foreign keys first
+      if (existingIndexNames.includes('idx_team_members_team_added_at')) {
+        console.log("Removing index 'idx_team_members_team_added_at'...");
+        await queryInterface.removeIndex('TeamMembers', 'idx_team_members_team_added_at');
+      }
+      
+      if (existingIndexNames.includes('idx_team_members_added_at')) {
+        console.log("Removing index 'idx_team_members_added_at'...");
+        await queryInterface.removeIndex('TeamMembers', 'idx_team_members_added_at');
+      }
+      
+      // Remove columns if they exist (this will automatically remove foreign key constraints and related indexes)
+      if (tableDescription.added_by_user_id) {
+        console.log("Removing 'added_by_user_id' column (this will remove the FK constraint and its index)...");
+        await queryInterface.removeColumn('TeamMembers', 'added_by_user_id');
+      }
+      
+      if (tableDescription.added_at) {
+        console.log("Removing 'added_at' column...");
+        await queryInterface.removeColumn('TeamMembers', 'added_at');
+      }
       
       // Note: We don't remove the unique constraint as it may have existed before this migration
       

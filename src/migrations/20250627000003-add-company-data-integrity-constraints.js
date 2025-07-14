@@ -205,14 +205,50 @@ module.exports = {
         'chk_companies_valid_email'
       ];
       
+      // First check which constraints actually exist
+      const [existingConstraints] = await queryInterface.sequelize.query(`
+        SELECT cc.CONSTRAINT_NAME 
+        FROM INFORMATION_SCHEMA.CHECK_CONSTRAINTS cc
+        JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc 
+          ON cc.CONSTRAINT_NAME = tc.CONSTRAINT_NAME 
+          AND cc.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA
+        WHERE cc.CONSTRAINT_SCHEMA = DATABASE() 
+          AND tc.TABLE_NAME = 'Companies'
+      `, { transaction });
+      
+      const existingConstraintNames = existingConstraints.map(row => row.CONSTRAINT_NAME);
+      console.log('Existing constraints before removal:', existingConstraintNames);
+      
       for (const constraintName of constraintsToRemove) {
-        try {
-          await queryInterface.removeConstraint('Companies', constraintName, { transaction });
-          console.log(`Removed constraint: ${constraintName}`);
-        } catch (error) {
-          console.warn(`Could not remove constraint ${constraintName}:`, error.message);
+        if (existingConstraintNames.includes(constraintName)) {
+          try {
+            // Use raw SQL to drop check constraints since Sequelize sometimes has issues
+            await queryInterface.sequelize.query(
+              `ALTER TABLE Companies DROP CHECK ${constraintName}`,
+              { transaction }
+            );
+            console.log(`Successfully removed constraint: ${constraintName}`);
+          } catch (error) {
+            console.error(`ERROR removing constraint ${constraintName}:`, error.message);
+            // Don't throw - try to continue with other constraints
+          }
+        } else {
+          console.log(`Constraint ${constraintName} does not exist, skipping`);
         }
       }
+      
+      // Verify all constraints were removed
+      const [remainingConstraints] = await queryInterface.sequelize.query(`
+        SELECT cc.CONSTRAINT_NAME 
+        FROM INFORMATION_SCHEMA.CHECK_CONSTRAINTS cc
+        JOIN INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc 
+          ON cc.CONSTRAINT_NAME = tc.CONSTRAINT_NAME 
+          AND cc.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA
+        WHERE cc.CONSTRAINT_SCHEMA = DATABASE() 
+          AND tc.TABLE_NAME = 'Companies'
+      `, { transaction });
+      
+      console.log('Remaining constraints after removal:', remainingConstraints.map(row => row.CONSTRAINT_NAME));
     });
   }
 };

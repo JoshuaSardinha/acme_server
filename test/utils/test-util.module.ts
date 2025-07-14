@@ -27,7 +27,7 @@ import { UserPermission } from '../../src/modules/role/entities/user-permission.
         port: configService.get('DB_PORT', 3306),
         username: configService.get('DB_USER', 'root'),
         password: configService.get('DB_PASS', ''),
-        database: configService.get('DB_NAME', 'national_niner_test'),
+        database: configService.get('DB_NAME', 'acme_test'),
         autoLoadModels: false,
         synchronize: true,
         logging: false, // Disable logging for cleaner test output

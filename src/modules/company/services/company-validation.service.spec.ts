@@ -223,10 +223,10 @@ describe('CompanyValidationService', () => {
   });
 
   describe('validateCrossCompanyAccess', () => {
-    it('should pass when National Niner employee accesses any company', async () => {
+    it('should pass when Acme employee accesses any company', async () => {
       mockUserModel.findByPk.mockResolvedValue({
         id: 'user-1',
-        role: { name: 'National Niner Admin' },
+        role: { name: 'Acme Admin' },
         company_id: 'company-1',
       });
 

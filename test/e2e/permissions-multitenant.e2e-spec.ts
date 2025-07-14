@@ -11,8 +11,8 @@ import { JwtAuthGuard } from '../../src/core/guards/jwt-auth.guard';
 // Test utilities
 import { authHelper } from '../auth/auth.helper';
 import { MockJwtAuthGuard } from '../auth/mock-jwt-auth.guard';
-import { createTestCompany } from '../factories/company.factory';
 import { ensureAcmeCompanyExists } from '../factories/acme-company.factory';
+import { createTestCompany } from '../factories/company.factory';
 import { createStandardRoles, getRoleByCode } from '../factories/role.factory';
 // Removed unused import: createTestUser
 import { DbCleanerService } from '../utils/db-cleaner.service';
@@ -35,14 +35,14 @@ describe('Multi-Tenant Permission Security (E2E)', () => {
   let dbCleaner: DbCleanerService;
 
   // Law Firms (Companies)
-  let nationalNinerLaw: Company;
+  let acmeLaw: Company;
   let smithLawFirm: Company;
   let johnsonAttorneys: Company;
   let publicDefender: Company;
 
   // Users across different firms
-  let nationalNinerAdmin: User;
-  let nationalNinerAttorney: User;
+  let acmeAdmin: User;
+  let acmeAttorney: User;
   let smithAdmin: User;
   let smithAttorney: User;
   let smithClient: User;
@@ -51,7 +51,7 @@ describe('Multi-Tenant Permission Security (E2E)', () => {
   let publicDefenderAttorney: User;
 
   // Roles across different firms
-  let nationalNinerAdminRole: Role;
+  let acmeAdminRole: Role;
   let smithAdminRole: Role;
   let smithAttorneyRole: Role;
   let smithClientRole: Role;
@@ -151,8 +151,8 @@ describe('Multi-Tenant Permission Security (E2E)', () => {
     // Create standard roles first
     await createStandardRoles();
 
-    // Ensure National Niner company exists
-    nationalNinerLaw = await ensureAcmeCompanyExists();
+    // Ensure Acme company exists
+    acmeLaw = await ensureAcmeCompanyExists();
 
     // Create law firms (companies) with unique subdomains to avoid conflicts
     const testId = Date.now().toString();
@@ -202,17 +202,17 @@ describe('Multi-Tenant Permission Security (E2E)', () => {
 
   async function createFirmRoles() {
     // Get standard roles from the database
-    const nnAdminRole = await getRoleByCode('national_niner_admin');
+    const acAdminRole = await getRoleByCode('acme_admin');
     const vendorAdminRole = await getRoleByCode('vendor_admin');
     const vendorEmployeeRole = await getRoleByCode('vendor_employee');
     const clientRole = await getRoleByCode('client');
 
-    if (!nnAdminRole || !vendorAdminRole || !vendorEmployeeRole || !clientRole) {
+    if (!acAdminRole || !vendorAdminRole || !vendorEmployeeRole || !clientRole) {
       throw new Error('Required standard roles not found');
     }
 
     // Now assign to the non-nullable variables
-    nationalNinerAdminRole = nnAdminRole;
+    acmeAdminRole = acAdminRole;
     smithAdminRole = vendorAdminRole;
     smithAttorneyRole = vendorEmployeeRole;
     smithClientRole = clientRole;
@@ -223,34 +223,34 @@ describe('Multi-Tenant Permission Security (E2E)', () => {
 
   async function createFirmUsers() {
     // Get roles for user creation
-    const nnAdminRole = await getRoleByCode('national_niner_admin');
-    const nnEmployeeRole = await getRoleByCode('national_niner_employee');
+    const acAdminRole = await getRoleByCode('acme_admin');
+    const acEmployeeRole = await getRoleByCode('acme_employee');
     const vendorAdminRole = await getRoleByCode('vendor_admin');
     const vendorEmployeeRole = await getRoleByCode('vendor_employee');
     const clientRole = await getRoleByCode('client');
 
-    if (!nnAdminRole || !nnEmployeeRole || !vendorAdminRole || !vendorEmployeeRole || !clientRole) {
+    if (!acAdminRole || !acEmployeeRole || !vendorAdminRole || !vendorEmployeeRole || !clientRole) {
       throw new Error('Required roles not found');
     }
 
-    // National Niner users
-    nationalNinerAdmin = await User.create({
-      first_name: 'NN',
+    // Acme users
+    acmeAdmin = await User.create({
+      first_name: 'AC',
       last_name: 'Admin',
-      email: 'admin@nationalniner.com',
-      auth0_user_id: 'auth0|nn_admin_123',
-      role_id: nnAdminRole.id,
-      company_id: nationalNinerLaw.id,
+      email: 'admin@acme.com',
+      auth0_user_id: 'auth0|ac_admin_123',
+      role_id: acAdminRole.id,
+      company_id: acmeLaw.id,
       is_lawyer: false,
     });
 
-    nationalNinerAttorney = await User.create({
-      first_name: 'NN',
+    acmeAttorney = await User.create({
+      first_name: 'AC',
       last_name: 'Attorney',
-      email: 'attorney@nationalniner.com',
-      auth0_user_id: 'auth0|nn_attorney_123',
-      role_id: nnEmployeeRole.id,
-      company_id: nationalNinerLaw.id,
+      email: 'attorney@acme.com',
+      auth0_user_id: 'auth0|ac_attorney_123',
+      role_id: acEmployeeRole.id,
+      company_id: acmeLaw.id,
       is_lawyer: true,
     });
 
@@ -324,21 +324,21 @@ describe('Multi-Tenant Permission Security (E2E)', () => {
 
     // Create some test-specific direct permissions for users to enable the test scenarios
     const testUserPermissions = [
-      // Give National Niner admin some system-wide permissions
+      // Give Acme admin some system-wide permissions
       {
-        user_id: nationalNinerAdmin.id,
+        user_id: acmeAdmin.id,
         permission_id: permissions.find((p) => p.name === 'MANAGE_FIRM_USERS')?.id,
         granted: true,
         granted_at: new Date(),
       },
       {
-        user_id: nationalNinerAdmin.id,
+        user_id: acmeAdmin.id,
         permission_id: permissions.find((p) => p.name === 'GENERATE_REPORTS')?.id,
         granted: true,
         granted_at: new Date(),
       },
       {
-        user_id: nationalNinerAdmin.id,
+        user_id: acmeAdmin.id,
         permission_id: permissions.find((p) => p.name === 'MANAGE_BILLING')?.id,
         granted: true,
         granted_at: new Date(),
@@ -443,17 +443,17 @@ describe('Multi-Tenant Permission Security (E2E)', () => {
 
   async function generateAuthTokens() {
     tokens = {
-      nationalNinerAdmin: authHelper.generateToken({
-        sub: nationalNinerAdmin.auth0_user_id,
-        email: nationalNinerAdmin.email,
-        role: 'national_niner_admin',
-        org_id: nationalNinerLaw.id,
+      acmeAdmin: authHelper.generateToken({
+        sub: acmeAdmin.auth0_user_id,
+        email: acmeAdmin.email,
+        role: 'acme_admin',
+        org_id: acmeLaw.id,
       }),
-      nationalNinerAttorney: authHelper.generateToken({
-        sub: nationalNinerAttorney.auth0_user_id,
-        email: nationalNinerAttorney.email,
-        role: 'national_niner_employee',
-        org_id: nationalNinerLaw.id,
+      acmeAttorney: authHelper.generateToken({
+        sub: acmeAttorney.auth0_user_id,
+        email: acmeAttorney.email,
+        role: 'acme_employee',
+        org_id: acmeLaw.id,
       }),
       smithAdmin: authHelper.generateToken({
         sub: smithAdmin.auth0_user_id,
@@ -793,30 +793,30 @@ describe('Multi-Tenant Permission Security (E2E)', () => {
     });
   });
 
-  describe('🔒 National Niner Super-Admin Access', () => {
+  describe('🔒 Acme Super-Admin Access', () => {
     describe('Cross-Tenant Administrative Access', () => {
-      it("should allow National Niner admin to access any firm's data", async () => {
-        // National Niner admin accessing Smith Law firm data
+      it("should allow Acme admin to access any firm's data", async () => {
+        // Acme admin accessing Smith Law firm data
         const smithAccessResponse = await request(app.getHttpServer())
           .get(`/permissions/users/${smithAdmin.id}/permissions`)
-          .set('Authorization', `Bearer ${tokens.nationalNinerAdmin}`)
+          .set('Authorization', `Bearer ${tokens.acmeAdmin}`)
           .expect(200);
 
         expect(smithAccessResponse.body.user_id).toBe(smithAdmin.id);
 
-        // National Niner admin accessing Johnson Attorneys data
+        // Acme admin accessing Johnson Attorneys data
         const johnsonAccessResponse = await request(app.getHttpServer())
           .get(`/permissions/users/${johnsonAdmin.id}/permissions`)
-          .set('Authorization', `Bearer ${tokens.nationalNinerAdmin}`)
+          .set('Authorization', `Bearer ${tokens.acmeAdmin}`)
           .expect(200);
 
         expect(johnsonAccessResponse.body.user_id).toBe(johnsonAdmin.id);
       });
 
-      it('should allow National Niner admin to perform system-wide cache operations', async () => {
+      it('should allow Acme admin to perform system-wide cache operations', async () => {
         const response = await request(app.getHttpServer())
           .post('/permissions/cache/invalidate')
-          .set('Authorization', `Bearer ${tokens.nationalNinerAdmin}`)
+          .set('Authorization', `Bearer ${tokens.acmeAdmin}`)
           .send({
             invalidate_all: true,
             reason: 'System-wide maintenance',
@@ -827,10 +827,10 @@ describe('Multi-Tenant Permission Security (E2E)', () => {
         expect(response.body.reason).toBe('System-wide maintenance');
       });
 
-      it('should allow National Niner admin to warm up cache for any firm', async () => {
+      it('should allow Acme admin to warm up cache for any firm', async () => {
         const response = await request(app.getHttpServer())
           .post('/permissions/cache/warmup')
-          .set('Authorization', `Bearer ${tokens.nationalNinerAdmin}`)
+          .set('Authorization', `Bearer ${tokens.acmeAdmin}`)
           .send({
             company_id: smithLawFirm.id,
           })
@@ -842,10 +842,10 @@ describe('Multi-Tenant Permission Security (E2E)', () => {
 
     describe('System-wide Permission Management', () => {
       it('should handle system-wide permission checks', async () => {
-        // National Niner admin checking their own permissions
+        // Acme admin checking their own permissions
         const response = await request(app.getHttpServer())
-          .get(`/permissions/users/${nationalNinerAdmin.id}/permissions`)
-          .set('Authorization', `Bearer ${tokens.nationalNinerAdmin}`)
+          .get(`/permissions/users/${acmeAdmin.id}/permissions`)
+          .set('Authorization', `Bearer ${tokens.acmeAdmin}`)
           .expect(200);
 
         expect(response.body.permissions.length).toBeGreaterThan(0);
@@ -983,7 +983,7 @@ describe('Multi-Tenant Permission Security (E2E)', () => {
         // Get cache stats
         const statsResponse = await request(app.getHttpServer())
           .get('/permissions/cache/stats')
-          .set('Authorization', `Bearer ${tokens.nationalNinerAdmin}`)
+          .set('Authorization', `Bearer ${tokens.acmeAdmin}`)
           .expect(200);
 
         expect(statsResponse.body.total_entries).toBeGreaterThan(0);

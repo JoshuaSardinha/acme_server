@@ -22,8 +22,8 @@ import { Company, CompanyType } from '../../src/modules/company/entities/company
 import { Role } from '../../src/modules/role/entities/role.entity';
 import { authHelper } from '../auth/auth.helper';
 import { MockJwtAuthGuard } from '../auth/mock-jwt-auth.guard';
-import { createTestCompany } from '../factories/company.factory';
 import { ensureAcmeCompanyExists } from '../factories/acme-company.factory';
+import { createTestCompany } from '../factories/company.factory';
 import { createStandardRoles, getRoleByCode } from '../factories/role.factory';
 import { DbCleanerService } from '../utils/db-cleaner.service';
 
@@ -71,18 +71,18 @@ class InvitationsTestPermissionsGuard implements CanActivate {
     }
 
     // For invitation permissions, check user role and permissions
-    const hasNnInvitePermission = requiredPermissions.includes('users:invite:nn');
+    const hasAcInvitePermission = requiredPermissions.includes('users:invite:ac');
     const hasVendorInvitePermission = requiredPermissions.includes('users:invite:vendor');
 
-    if (hasNnInvitePermission) {
-      // Only NATIONAL_NINER_ADMIN can invite NN users
-      if (roleCode === 'national_niner_admin') {
+    if (hasAcInvitePermission) {
+      // Only ACME_ADMIN can invite Acme users
+      if (roleCode === 'acme_admin') {
         return true;
       } else {
         throw new ForbiddenException({
           success: false,
           code: 'PERMISSION_DENIED',
-          message: 'Insufficient permissions for NN user invitation',
+          message: 'Insufficient permissions for AC user invitation',
         });
       }
     }
@@ -101,7 +101,7 @@ class InvitationsTestPermissionsGuard implements CanActivate {
     }
 
     // For other permissions, allow admin users
-    const isAdmin = ['vendor_admin', 'national_niner_admin'].includes(roleCode);
+    const isAdmin = ['vendor_admin', 'acme_admin'].includes(roleCode);
 
     if (isAdmin) {
       return true;
@@ -124,7 +124,7 @@ describe('User Invitation Endpoints (e2e)', () => {
   let userService: UserService;
 
   // Test user tokens
-  let nnAdminToken: string;
+  let acmeAdminToken: string;
   let vendorAdminToken: string;
   let vendorEmployeeToken: string;
   let clientToken: string;
@@ -134,7 +134,7 @@ describe('User Invitation Endpoints (e2e)', () => {
   let vendorCompany: Company;
 
   // Test users
-  let nnAdmin: User;
+  let acmeAdmin: User;
   let vendorAdmin: User;
   let vendorEmployee: User;
   let client: User;
@@ -211,22 +211,22 @@ describe('User Invitation Endpoints (e2e)', () => {
     await vendorCompany.update({ type: CompanyType.VENDOR });
 
     // Get roles for user creation
-    const nnAdminRole = await getRoleByCode('national_niner_admin');
+    const acmeAdminRole = await getRoleByCode('acme_admin');
     const vendorAdminRole = await getRoleByCode('vendor_admin');
     const vendorEmployeeRole = await getRoleByCode('vendor_employee');
     const clientRole = await getRoleByCode('client');
 
-    if (!nnAdminRole || !vendorAdminRole || !vendorEmployeeRole || !clientRole) {
+    if (!acmeAdminRole || !vendorAdminRole || !vendorEmployeeRole || !clientRole) {
       throw new Error('Required roles not found');
     }
 
     // Create test users using role_id instead of role enum
-    nnAdmin = await User.create({
-      first_name: 'NN',
+    acmeAdmin = await User.create({
+      first_name: 'AC',
       last_name: 'Admin',
-      email: 'nnadmin@nationalniner.com',
-      auth0_user_id: 'auth0|nnadmin',
-      role_id: nnAdminRole.id,
+      email: 'acmeadmin@acme.com',
+      auth0_user_id: 'auth0|acmeadmin',
+      role_id: acmeAdminRole.id,
       company_id: acmeCompany.id,
       is_lawyer: false,
     });
@@ -262,12 +262,12 @@ describe('User Invitation Endpoints (e2e)', () => {
     });
 
     // Generate JWT tokens using authHelper with role codes
-    nnAdminToken = authHelper.generateToken({
-      sub: nnAdmin.auth0_user_id,
-      email: nnAdmin.email,
-      role: 'national_niner_admin',
-      org_id: nnAdmin.company_id,
-      permissions: ['users:invite:nn'],
+    acmeAdminToken = authHelper.generateToken({
+      sub: acmeAdmin.auth0_user_id,
+      email: acmeAdmin.email,
+      role: 'acme_admin',
+      org_id: acmeAdmin.company_id,
+      permissions: ['users:invite:ac'],
     });
 
     vendorAdminToken = authHelper.generateToken({
@@ -295,76 +295,76 @@ describe('User Invitation Endpoints (e2e)', () => {
     });
   });
 
-  describe('POST /users/nn-invite', () => {
-    const validNnInviteData = {
-      email: 'newuser@nationalniner.com',
+  describe('POST /users/ac-invite', () => {
+    const validAcInviteData = {
+      email: 'newuser@acme.com',
       first_name: 'New',
       last_name: 'User',
-      role: 'national_niner_employee',
+      role: 'acme_employee',
       is_lawyer: false,
     };
 
-    it('should successfully invite a new NN user when called by NN_ADMIN', async () => {
+    it('should successfully invite a new AC user when called by AC_ADMIN', async () => {
       const response = await request(app.getHttpServer())
-        .post('/users/nn-invite')
-        .set('Authorization', `Bearer ${nnAdminToken}`)
-        .send(validNnInviteData)
+        .post('/users/ac-invite')
+        .set('Authorization', `Bearer ${acmeAdminToken}`)
+        .send(validAcInviteData)
         .expect(201);
 
       expect(response.body.success).toBe(true);
       expect(response.body.code).toBe('INVITATION_201');
-      expect(response.body.data.email).toBe('newuser@nationalniner.com');
-      expect(response.body.data.role).toBe('national_niner_employee');
+      expect(response.body.data.email).toBe('newuser@acme.com');
+      expect(response.body.data.role).toBe('acme_employee');
       expect(response.body.data.status).toBe('PENDING');
 
       // Verify Auth0 calls were made
       expect(mockAuth0CreateUser).toHaveBeenCalledWith({
-        email: 'newuser@nationalniner.com',
+        email: 'newuser@acme.com',
         name: 'New User',
         user_metadata: expect.objectContaining({
-          role: 'national_niner_employee',
+          role: 'acme_employee',
         }),
       });
-      expect(mockAuth0SendEmail).toHaveBeenCalledWith('newuser@nationalniner.com');
+      expect(mockAuth0SendEmail).toHaveBeenCalledWith('newuser@acme.com');
 
       // Verify user was created in database
-      const user = await User.findOne({ where: { email: 'newuser@nationalniner.com' } });
+      const user = await User.findOne({ where: { email: 'newuser@acme.com' } });
       expect(user).toBeDefined();
       expect(user?.company_id).toBe(acmeCompany.id);
       expect(user?.auth0_user_id).toBe('auth0|test123');
     });
 
-    it('should return 403 when vendor admin tries to use NN invite endpoint', () => {
+    it('should return 403 when vendor admin tries to use AC invite endpoint', () => {
       return request(app.getHttpServer())
-        .post('/users/nn-invite')
+        .post('/users/ac-invite')
         .set('Authorization', `Bearer ${vendorAdminToken}`)
-        .send(validNnInviteData)
+        .send(validAcInviteData)
         .expect(403);
     });
 
-    it('should return 403 when vendor employee tries to use NN invite endpoint', () => {
+    it('should return 403 when vendor employee tries to use AC invite endpoint', () => {
       return request(app.getHttpServer())
-        .post('/users/nn-invite')
+        .post('/users/ac-invite')
         .set('Authorization', `Bearer ${vendorEmployeeToken}`)
-        .send(validNnInviteData)
+        .send(validAcInviteData)
         .expect(403);
     });
 
-    it('should return 403 when client tries to use NN invite endpoint', () => {
+    it('should return 403 when client tries to use AC invite endpoint', () => {
       return request(app.getHttpServer())
-        .post('/users/nn-invite')
+        .post('/users/ac-invite')
         .set('Authorization', `Bearer ${clientToken}`)
-        .send(validNnInviteData)
+        .send(validAcInviteData)
         .expect(403);
     });
 
-    it('should return 400 when trying to assign a vendor role via NN endpoint', () => {
+    it('should return 400 when trying to assign a vendor role via AC endpoint', () => {
       return request(app.getHttpServer())
-        .post('/users/nn-invite')
-        .set('Authorization', `Bearer ${nnAdminToken}`)
+        .post('/users/ac-invite')
+        .set('Authorization', `Bearer ${acmeAdminToken}`)
         .send({
-          ...validNnInviteData,
-          role: 'vendor_employee', // Invalid role for NN
+          ...validAcInviteData,
+          role: 'vendor_employee', // Invalid role for AC
         })
         .expect(400);
     });
@@ -372,26 +372,26 @@ describe('User Invitation Endpoints (e2e)', () => {
     it('should return 409 when inviting an existing user', async () => {
       // First invitation
       await request(app.getHttpServer())
-        .post('/users/nn-invite')
-        .set('Authorization', `Bearer ${nnAdminToken}`)
+        .post('/users/ac-invite')
+        .set('Authorization', `Bearer ${acmeAdminToken}`)
         .send({
           email: 'duplicate@example.com',
           first_name: 'Dup',
           last_name: 'User',
-          role: 'national_niner_employee',
+          role: 'acme_employee',
           is_lawyer: false,
         })
         .expect(201);
 
       // Second invitation with same email
       return request(app.getHttpServer())
-        .post('/users/nn-invite')
-        .set('Authorization', `Bearer ${nnAdminToken}`)
+        .post('/users/ac-invite')
+        .set('Authorization', `Bearer ${acmeAdminToken}`)
         .send({
           email: 'duplicate@example.com',
           first_name: 'Dup',
           last_name: 'User',
-          role: 'national_niner_employee',
+          role: 'acme_employee',
           is_lawyer: false,
         })
         .expect(409);
@@ -399,10 +399,10 @@ describe('User Invitation Endpoints (e2e)', () => {
 
     it('should return 400 for invalid email format', () => {
       return request(app.getHttpServer())
-        .post('/users/nn-invite')
-        .set('Authorization', `Bearer ${nnAdminToken}`)
+        .post('/users/ac-invite')
+        .set('Authorization', `Bearer ${acmeAdminToken}`)
         .send({
-          ...validNnInviteData,
+          ...validAcInviteData,
           email: 'invalid-email',
         })
         .expect(400);
@@ -410,8 +410,8 @@ describe('User Invitation Endpoints (e2e)', () => {
 
     it('should return 400 for missing required fields', () => {
       return request(app.getHttpServer())
-        .post('/users/nn-invite')
-        .set('Authorization', `Bearer ${nnAdminToken}`)
+        .post('/users/ac-invite')
+        .set('Authorization', `Bearer ${acmeAdminToken}`)
         .send({
           email: 'test@example.com',
           // Missing first_name, last_name, role, is_lawyer
@@ -424,13 +424,13 @@ describe('User Invitation Endpoints (e2e)', () => {
       mockAuth0CreateUser.mockRejectedValueOnce(new Error('Auth0 API Error'));
 
       await request(app.getHttpServer())
-        .post('/users/nn-invite')
-        .set('Authorization', `Bearer ${nnAdminToken}`)
+        .post('/users/ac-invite')
+        .set('Authorization', `Bearer ${acmeAdminToken}`)
         .send({
           email: 'transactiontest@example.com',
           first_name: 'Transaction',
           last_name: 'Test',
-          role: 'national_niner_employee',
+          role: 'acme_employee',
           is_lawyer: false,
         })
         .expect(422);
@@ -498,21 +498,21 @@ describe('User Invitation Endpoints (e2e)', () => {
         .expect(403);
     });
 
-    it('should return 403 when NN admin tries to use vendor invite endpoint', () => {
+    it('should return 403 when AC admin tries to use vendor invite endpoint', () => {
       return request(app.getHttpServer())
         .post('/users/vendor-invite')
-        .set('Authorization', `Bearer ${nnAdminToken}`)
+        .set('Authorization', `Bearer ${acmeAdminToken}`)
         .send(validVendorInviteData)
         .expect(403);
     });
 
-    it('should return 400 when trying to assign an NN role via vendor endpoint', () => {
+    it('should return 400 when trying to assign an AC role via vendor endpoint', () => {
       return request(app.getHttpServer())
         .post('/users/vendor-invite')
         .set('Authorization', `Bearer ${vendorAdminToken}`)
         .send({
           ...validVendorInviteData,
-          role: 'national_niner_employee', // Invalid role for vendor
+          role: 'acme_employee', // Invalid role for vendor
         })
         .expect(400);
     });
@@ -600,12 +600,12 @@ describe('User Invitation Endpoints (e2e)', () => {
   describe('Authentication and Authorization', () => {
     it('should return 401 when no JWT token is provided', () => {
       return request(app.getHttpServer())
-        .post('/users/nn-invite')
+        .post('/users/ac-invite')
         .send({
           email: 'test@example.com',
           first_name: 'Test',
           last_name: 'User',
-          role: 'national_niner_employee',
+          role: 'acme_employee',
           is_lawyer: false,
         })
         .expect(401);
@@ -613,13 +613,13 @@ describe('User Invitation Endpoints (e2e)', () => {
 
     it('should return 401 when invalid JWT token is provided', () => {
       return request(app.getHttpServer())
-        .post('/users/nn-invite')
+        .post('/users/ac-invite')
         .set('Authorization', 'Bearer invalid-token')
         .send({
           email: 'test@example.com',
           first_name: 'Test',
           last_name: 'User',
-          role: 'national_niner_employee',
+          role: 'acme_employee',
           is_lawyer: false,
         })
         .expect(401);
@@ -629,13 +629,13 @@ describe('User Invitation Endpoints (e2e)', () => {
   describe('Input Validation', () => {
     it('should return 400 for invalid boolean value', () => {
       return request(app.getHttpServer())
-        .post('/users/nn-invite')
-        .set('Authorization', `Bearer ${nnAdminToken}`)
+        .post('/users/ac-invite')
+        .set('Authorization', `Bearer ${acmeAdminToken}`)
         .send({
           email: 'test@example.com',
           first_name: 'Test',
           last_name: 'User',
-          role: 'national_niner_employee',
+          role: 'acme_employee',
           is_lawyer: 'not-a-boolean',
         })
         .expect(400);

@@ -34,6 +34,9 @@ module.exports = {
     await queryInterface.sequelize.transaction(async (transaction) => {
       console.log('Removing role_id foreign key column from Users table...');
       
+      // Get current table structure before removing
+      const tableDescription = await queryInterface.describeTable('Users');
+      
       // Remove index first
       try {
         await queryInterface.removeIndex('Users', 'idx_users_role_id', { transaction });
@@ -41,8 +44,13 @@ module.exports = {
         console.warn('Could not remove index idx_users_role_id:', error.message);
       }
 
-      // Remove the column
-      await queryInterface.removeColumn('Users', 'role_id', { transaction });
+      // Remove the column if it exists
+      if (tableDescription.role_id) {
+        console.log("Removing 'role_id' column from Users table...");
+        await queryInterface.removeColumn('Users', 'role_id', { transaction });
+      } else {
+        console.log("'role_id' column does not exist in Users table, skipping removal.");
+      }
     });
   }
 };

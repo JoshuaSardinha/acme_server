@@ -11,10 +11,10 @@ module.exports = {
         { enum: 'client', name: 'Client', description: 'Client user role' },
         { enum: 'vendor_employee', name: 'Vendor Employee', description: 'Vendor employee role' },
         { enum: 'vendor_admin', name: 'Vendor Admin', description: 'Vendor administrator role' },
-        { enum: 'national_niner_employee', name: 'National Niner Employee', description: 'National Niner employee role' },
-        { enum: 'national_niner_admin', name: 'National Niner Admin', description: 'National Niner administrator role' },
+        { enum: 'acme_employee', name: 'Acme Employee', description: 'Acme employee role' },
+        { enum: 'acme_admin', name: 'Acme Admin', description: 'Acme administrator role' },
         { enum: 'vendor_manager', name: 'Vendor Manager', description: 'Vendor manager role' },
-        { enum: 'national_niner_manager', name: 'National Niner Manager', description: 'National Niner manager role' },
+        { enum: 'acme_manager', name: 'Acme Manager', description: 'Acme manager role' },
         { enum: 'team_member', name: 'Team Member', description: 'Team member role' },
         { enum: 'super_admin', name: 'Super Admin', description: 'Super administrator role' }
       ];
@@ -96,10 +96,10 @@ module.exports = {
         'Client': 'client',
         'Vendor Employee': 'vendor_employee',
         'Vendor Admin': 'vendor_admin',
-        'National Niner Employee': 'national_niner_employee',
-        'National Niner Admin': 'national_niner_admin',
+        'Acme Employee': 'acme_employee',
+        'Acme Admin': 'acme_admin',
         'Vendor Manager': 'vendor_manager',
-        'National Niner Manager': 'national_niner_manager',
+        'Acme Manager': 'acme_manager',
         'Team Member': 'team_member',
         'Super Admin': 'super_admin'
       };

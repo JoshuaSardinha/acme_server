@@ -17,8 +17,24 @@ module.exports = {
   },
 
   async down (queryInterface, Sequelize) {
-    // Remove subscription columns from Companies table
-    await queryInterface.removeColumn('Companies', 'subscription_status');
-    await queryInterface.removeColumn('Companies', 'subscription_type');
+    await queryInterface.sequelize.transaction(async (transaction) => {
+      // Get current table structure before removing columns
+      const tableDescription = await queryInterface.describeTable('Companies');
+      
+      // Remove subscription columns from Companies table if they exist
+      if (tableDescription.subscription_status) {
+        console.log("Removing 'subscription_status' column from Companies table...");
+        await queryInterface.removeColumn('Companies', 'subscription_status', { transaction });
+      } else {
+        console.log("'subscription_status' column does not exist in Companies table, skipping removal.");
+      }
+      
+      if (tableDescription.subscription_type) {
+        console.log("Removing 'subscription_type' column from Companies table...");
+        await queryInterface.removeColumn('Companies', 'subscription_type', { transaction });
+      } else {
+        console.log("'subscription_type' column does not exist in Companies table, skipping removal.");
+      }
+    });
   }
 };

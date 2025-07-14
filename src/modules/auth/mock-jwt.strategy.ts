@@ -26,7 +26,7 @@ export class MockJwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       // Extract JWT from Authorization header (same as real strategy)
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       // Mock Auth0 configuration
-      audience: 'https://api.test.nationalniner.com',
+      audience: 'https://api.test.acme.com',
       issuer: 'https://test-auth0-domain.auth0.com/',
       algorithms: ['RS256'],
       ignoreExpiration: true, // Ignore expiration for testing
@@ -49,7 +49,7 @@ export class MockJwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     return {
       iss: 'https://test-auth0-domain.auth0.com/',
       sub: 'mock-user-id-123',
-      aud: 'https://api.test.nationalniner.com',
+      aud: 'https://api.test.acme.com',
       iat: Math.floor(Date.now() / 1000) - 300, // 5 minutes ago
       exp: Math.floor(Date.now() / 1000) + 3600, // 1 hour from now
       azp: 'mock-client-id',

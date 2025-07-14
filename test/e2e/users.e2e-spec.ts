@@ -12,8 +12,8 @@ import { JwtAuthGuard } from '../../src/core/guards/jwt-auth.guard';
 // Test utilities
 import { authHelper } from '../auth/auth.helper';
 import { MockJwtAuthGuard } from '../auth/mock-jwt-auth.guard';
-import { createTestCompany } from '../factories/company.factory';
 import { ensureAcmeCompanyExists, getAcmeCompanyId } from '../factories/acme-company.factory';
+import { createTestCompany } from '../factories/company.factory';
 import { createStandardRoles, getRoleByCode } from '../factories/role.factory';
 import { createTestUser } from '../factories/user.factory';
 import { DbCleanerService } from '../utils/db-cleaner.service';
@@ -40,17 +40,17 @@ describe('Users (E2E)', () => {
   // Test data
   let testCompany1: Company;
   let testCompany2: Company;
-  let nationalNinerCompany: Company;
+  let acmeCompany: Company;
   let adminUser: User;
   let regularUser: User;
   let crossTenantUser: User;
-  let nnAdminUser: User;
+  let acmeAdminUser: User;
 
   // Mock auth tokens
   let adminToken: string;
   let regularToken: string;
   let crossTenantToken: string;
-  let nnAdminToken: string;
+  let acmeAdminToken: string;
   let invalidToken: string;
   let expiredToken: string;
 
@@ -88,8 +88,8 @@ describe('Users (E2E)', () => {
     // Create standard roles first
     await createStandardRoles();
 
-    // Ensure National Niner company exists
-    nationalNinerCompany = await ensureAcmeCompanyExists();
+    // Ensure Acme company exists
+    acmeCompany = await ensureAcmeCompanyExists();
 
     // Create test companies
     testCompany1 = await createTestCompany({
@@ -109,9 +109,9 @@ describe('Users (E2E)', () => {
     // Get roles
     const vendorAdminRole = await getRoleByCode('vendor_admin');
     const vendorEmployeeRole = await getRoleByCode('vendor_employee');
-    const nnAdminRole = await getRoleByCode('national_niner_admin');
+    const acmeAdminRole = await getRoleByCode('acme_admin');
 
-    if (!vendorAdminRole || !vendorEmployeeRole || !nnAdminRole) {
+    if (!vendorAdminRole || !vendorEmployeeRole || !acmeAdminRole) {
       throw new Error('Required roles not found');
     }
 
@@ -140,13 +140,13 @@ describe('Users (E2E)', () => {
       auth0_user_id: 'auth0|cross_tenant_user',
     });
 
-    // Create National Niner admin user
-    nnAdminUser = await User.create({
-      first_name: 'NN',
+    // Create Acme admin user
+    acmeAdminUser = await User.create({
+      first_name: 'AC',
       last_name: 'Admin',
-      email: 'nn.admin@nationalniner.com',
-      auth0_user_id: 'auth0|nn-admin-test',
-      role_id: nnAdminRole.id,
+      email: 'ac.admin@acme.com',
+      auth0_user_id: 'auth0|ac-admin-test',
+      role_id: acmeAdminRole.id,
       company_id: getAcmeCompanyId(),
     });
 
@@ -174,11 +174,11 @@ describe('Users (E2E)', () => {
       permissions: ['ADMIN_ACCESS', 'MANAGE_USERS'],
     });
 
-    nnAdminToken = authHelper.generateToken({
-      sub: nnAdminUser.auth0_user_id,
-      email: nnAdminUser.email,
-      role: 'national_niner_admin',
-      org_id: nnAdminUser.company_id,
+    acmeAdminToken = authHelper.generateToken({
+      sub: acmeAdminUser.auth0_user_id,
+      email: acmeAdminUser.email,
+      role: 'acme_admin',
+      org_id: acmeAdminUser.company_id,
       permissions: ['MANAGE_COMPANIES', 'APPROVE_COMPANIES', 'CREATE_COMPANIES'],
     });
 
@@ -319,30 +319,30 @@ describe('Users (E2E)', () => {
       expect(response1.body.email).not.toBe(response2.body.email);
     });
 
-    it('should return correct data for National Niner admin user', async () => {
+    it('should return correct data for Acme admin user', async () => {
       const response = await request(app.getHttpServer())
         .get('/users/me')
-        .set('Authorization', `Bearer ${nnAdminToken}`)
+        .set('Authorization', `Bearer ${acmeAdminToken}`)
         .expect(HttpStatus.OK);
 
       expect(response.body).toMatchObject({
-        id: nnAdminUser.id,
-        email: nnAdminUser.email,
-        firstName: nnAdminUser.first_name,
-        lastName: nnAdminUser.last_name,
-        companyName: expect.stringContaining('National Niner'),
+        id: acmeAdminUser.id,
+        email: acmeAdminUser.email,
+        firstName: acmeAdminUser.first_name,
+        lastName: acmeAdminUser.last_name,
+        companyName: expect.stringContaining('Acme'),
         company: expect.objectContaining({
-          id: nationalNinerCompany.id,
+          id: acmeCompany.id,
           type: expect.any(String),
           status: expect.any(String),
         }),
         role: expect.objectContaining({
-          code: 'national_niner_admin',
-          name: 'National Niner Admin',
+          code: 'acme_admin',
+          name: 'Acme Admin',
         }),
         permissions: expect.any(Array),
-        auth0id: nnAdminUser.auth0_user_id,
-        status: nnAdminUser.status,
+        auth0id: acmeAdminUser.auth0_user_id,
+        status: acmeAdminUser.status,
       });
     });
   });

@@ -117,8 +117,8 @@ describe('Performance Benchmark Suite - Task 2.1 Database Optimization', () => {
     // Create standard roles first
     await createStandardRoles();
 
-    // Ensure National Niner company exists
-    await ensureNationalNinerCompanyExists();
+    // Ensure Acme company exists
+    await ensureAcmeCompanyExists();
   });
 
   afterEach(() => {

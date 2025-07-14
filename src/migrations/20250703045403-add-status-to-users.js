@@ -16,8 +16,16 @@ module.exports = {
 
   async down(queryInterface, Sequelize) {
     await queryInterface.sequelize.transaction(async (transaction) => {
-      // Remove status column from Users table
-      await queryInterface.removeColumn('Users', 'status', { transaction });
+      // Get current table structure before removing column
+      const tableDescription = await queryInterface.describeTable('Users');
+      
+      // Remove status column from Users table if it exists
+      if (tableDescription.status) {
+        console.log("Removing 'status' column from Users table...");
+        await queryInterface.removeColumn('Users', 'status', { transaction });
+      } else {
+        console.log("'status' column does not exist in Users table, skipping removal.");
+      }
     });
   }
 };

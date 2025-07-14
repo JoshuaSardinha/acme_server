@@ -3,7 +3,7 @@ pipeline {
     agent any
 
     environment {
-        DOCKER_IMAGE = 'joshuasardinhann/nationalniner-api'
+        DOCKER_IMAGE = 'joshuasardinha/acme-api'
         DOCKER_TAG = 'latest'
 
         // Service Names
@@ -12,12 +12,12 @@ pipeline {
         NGINX_SERVICE = 'nginx'
 
         // Container Names
-        GREEN_CONTAINER = 'national_niner_server-app_green'
-        BLUE_CONTAINER  = 'national_niner_server-app_blue'
-        NGINX_CONTAINER = 'national_niner_server-nginx'
+        GREEN_CONTAINER = 'acme_server-app_green'
+        BLUE_CONTAINER  = 'acme_server-app_blue'
+        NGINX_CONTAINER = 'acme_server-nginx'
 
         // Deployment Configuration
-        COMPOSE_PROJECT_NAME = 'national_niner_server'
+        COMPOSE_PROJECT_NAME = 'acme_server'
         HEALTH_CHECK_TIMEOUT = '120'
         NGINX_CONFIG_PATH = '/opt/nginx/conf.d/default.conf'
 
@@ -420,8 +420,8 @@ def deployToDev() {
             echo "🔄 Updating nginx configuration from ${activeService} to ${targetService}..."
 
             # Map service names to container names for nginx config
-            OLD_CONTAINER_NAME=\$([ "${activeService}" = "app_blue" ] && echo "national_niner_server-app_blue" || echo "national_niner_server-app_green")
-            NEW_CONTAINER_NAME=\$([ "${targetService}" = "app_blue" ] && echo "national_niner_server-app_blue" || echo "national_niner_server-app_green")
+            OLD_CONTAINER_NAME=\$([ "${activeService}" = "app_blue" ] && echo "acme_server-app_blue" || echo "acme_server-app_green")
+            NEW_CONTAINER_NAME=\$([ "${targetService}" = "app_blue" ] && echo "acme_server-app_blue" || echo "acme_server-app_green")
 
             echo "  - Old container name: \$OLD_CONTAINER_NAME"
             echo "  - New container name: \$NEW_CONTAINER_NAME"

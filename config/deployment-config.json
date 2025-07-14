@@ -6,7 +6,7 @@
         "host": "147.93.46.157",
         "user": "deploy",
         "port": 22,
-        "deployment_path": "/opt/national-niner-dev"
+        "deployment_path": "/opt/acme-dev"
       },
       "database": {
         "name_suffix": "_dev",
@@ -29,7 +29,7 @@
         "host": "PROD_SERVER_IP_HERE",
         "user": "deploy",
         "port": 22,
-        "deployment_path": "/opt/national-niner-prod"
+        "deployment_path": "/opt/acme-prod"
       },
       "database": {
         "name_suffix": "_prod",

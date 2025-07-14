@@ -24,8 +24,8 @@ import {
 import { Role } from '../../src/modules/role/entities/role.entity';
 import { authHelper } from '../auth/auth.helper';
 import { MockJwtAuthGuard } from '../auth/mock-jwt-auth.guard';
-import { createTestCompany } from '../factories/company.factory';
 import { ensureAcmeCompanyExists, getAcmeCompanyId } from '../factories/acme-company.factory';
+import { createTestCompany } from '../factories/company.factory';
 import { createStandardRoles, getRoleByCode } from '../factories/role.factory';
 import { createTestUser, createTestVendorAdmin } from '../factories/user.factory';
 import { DbCleanerService } from '../utils/db-cleaner.service';
@@ -58,7 +58,7 @@ class CompaniesTestPermissionsGuard implements CanActivate {
       return true;
     }
 
-    // Company admin permissions are only for NATIONAL_NINER_ADMIN
+    // Company admin permissions are only for ACME_ADMIN
     const companyAdminPermissions = ['MANAGE_COMPANIES', 'APPROVE_COMPANIES', 'CREATE_COMPANIES'];
 
     const requiresCompanyAdminPermission = requiredPermissions.some((perm) =>
@@ -66,7 +66,7 @@ class CompaniesTestPermissionsGuard implements CanActivate {
     );
 
     if (requiresCompanyAdminPermission) {
-      // Only NATIONAL_NINER_ADMIN can access company admin endpoints
+      // Only ACME_ADMIN can access company admin endpoints
       // Need to load the user with role relation
       const userWithRole = await User.findByPk(user.id, {
         include: [{ model: Role, as: 'role' }],
@@ -91,7 +91,7 @@ class CompaniesTestPermissionsGuard implements CanActivate {
       include: [{ model: Role, as: 'role' }],
     });
 
-    const adminRoleCodes = ['vendor_admin', 'national_niner_admin'];
+    const adminRoleCodes = ['vendor_admin', 'acme_admin'];
     const adminRoleNames = ['Vendor Admin', 'Acme Admin'];
     const roleCode = userWithRole?.role?.code || '';
     const roleName = userWithRole?.role?.name || '';
@@ -127,7 +127,7 @@ class CompaniesTestCompanyAdminGuard implements CanActivate {
       include: [{ model: Role, as: 'role' }],
     });
 
-    const adminRoleCodes = ['vendor_admin', 'national_niner_admin'];
+    const adminRoleCodes = ['vendor_admin', 'acme_admin'];
     const adminRoleNames = ['Vendor Admin', 'Acme Admin'];
     const roleCode = userWithRole?.role?.code || '';
     const roleName = userWithRole?.role?.name || '';
@@ -166,7 +166,7 @@ describe('Companies E2E', () => {
   let acmeCompany: Company;
 
   // JWT tokens
-  let nnAdminToken: string;
+  let acmeAdminToken: string;
   let vendorAdminToken: string;
   let clientToken: string;
   let invalidToken: string;
@@ -242,17 +242,17 @@ describe('Companies E2E', () => {
 
     // Create test users using factories
     // Acme Admin belongs to the Acme company
-    const nnAdminRole = await getRoleByCode('national_niner_admin');
-    if (!nnAdminRole) {
+    const acmeAdminRole = await getRoleByCode('acme_admin');
+    if (!acmeAdminRole) {
       throw new Error('Acme Admin role not found');
     }
 
     acmeAdminUser = await User.create({
-      first_name: 'NN',
+      first_name: 'AC',
       last_name: 'Admin',
-      email: 'nn.admin@nationalniner.com',
-      auth0_user_id: 'auth0|nn-admin',
-      role_id: nnAdminRole.id,
+      email: 'ac.admin@acme.com',
+      auth0_user_id: 'auth0|ac-admin',
+      role_id: acmeAdminRole.id,
       company_id: getAcmeCompanyId(), // Acme admins belong to Acme company
     });
 
@@ -278,10 +278,10 @@ describe('Companies E2E', () => {
     });
 
     // Generate JWT tokens using authHelper
-    nnAdminToken = authHelper.generateToken({
+    acmeAdminToken = authHelper.generateToken({
       sub: acmeAdminUser.auth0_user_id,
       email: acmeAdminUser.email,
-      role: 'national_niner_admin',
+      role: 'acme_admin',
       org_id: acmeAdminUser.company_id, // Acme admins belong to Acme company
     });
 
@@ -452,10 +452,10 @@ describe('Companies E2E', () => {
 
   describe('Admin Company Management (REQ-COMP-003)', () => {
     describe('GET /admin/companies - List Companies', () => {
-      it('should list companies for NN_ADMIN', async () => {
+      it('should list companies for AC_ADMIN', async () => {
         const response = await request(app.getHttpServer())
           .get('/admin/companies')
-          .set('Authorization', `Bearer ${nnAdminToken}`)
+          .set('Authorization', `Bearer ${acmeAdminToken}`)
           .expect(200);
 
         expect(response.body).toMatchObject({
@@ -473,7 +473,7 @@ describe('Companies E2E', () => {
       it('should filter companies by status', async () => {
         const response = await request(app.getHttpServer())
           .get('/admin/companies?status=PENDING_APPROVAL')
-          .set('Authorization', `Bearer ${nnAdminToken}`)
+          .set('Authorization', `Bearer ${acmeAdminToken}`)
           .expect(200);
 
         expect(response.body.companies).toHaveLength(1);
@@ -483,7 +483,7 @@ describe('Companies E2E', () => {
       it('should paginate results', async () => {
         const response = await request(app.getHttpServer())
           .get('/admin/companies?page=1&limit=2')
-          .set('Authorization', `Bearer ${nnAdminToken}`)
+          .set('Authorization', `Bearer ${acmeAdminToken}`)
           .expect(200);
 
         expect(response.body.companies).toHaveLength(2);
@@ -493,7 +493,7 @@ describe('Companies E2E', () => {
       it('should search companies by name', async () => {
         const response = await request(app.getHttpServer())
           .get('/admin/companies?searchTerm=Pending')
-          .set('Authorization', `Bearer ${nnAdminToken}`)
+          .set('Authorization', `Bearer ${acmeAdminToken}`)
           .expect(200);
 
         expect(response.body.companies).toHaveLength(1);
@@ -505,7 +505,7 @@ describe('Companies E2E', () => {
       it('should approve a pending company', async () => {
         const response = await request(app.getHttpServer())
           .patch(`/admin/companies/${pendingCompany.id}/approve`)
-          .set('Authorization', `Bearer ${nnAdminToken}`)
+          .set('Authorization', `Bearer ${acmeAdminToken}`)
           .send({ reason: 'All requirements met' })
           .expect(200);
 
@@ -525,7 +525,7 @@ describe('Companies E2E', () => {
       it('should reject approval of non-pending company', async () => {
         const response = await request(app.getHttpServer())
           .patch(`/admin/companies/${activeCompany.id}/approve`)
-          .set('Authorization', `Bearer ${nnAdminToken}`)
+          .set('Authorization', `Bearer ${acmeAdminToken}`)
           .expect(422);
 
         expect(response.body.message).toContain('Cannot approve company with status ACTIVE');
@@ -536,7 +536,7 @@ describe('Companies E2E', () => {
       it('should reject a pending company with reason', async () => {
         const response = await request(app.getHttpServer())
           .patch(`/admin/companies/${pendingCompany.id}/reject`)
-          .set('Authorization', `Bearer ${nnAdminToken}`)
+          .set('Authorization', `Bearer ${acmeAdminToken}`)
           .send({ reason: 'Incomplete documentation' })
           .expect(200);
 
@@ -556,7 +556,7 @@ describe('Companies E2E', () => {
       it('should require rejection reason', async () => {
         const response = await request(app.getHttpServer())
           .patch(`/admin/companies/${pendingCompany.id}/reject`)
-          .set('Authorization', `Bearer ${nnAdminToken}`)
+          .set('Authorization', `Bearer ${acmeAdminToken}`)
           .send({})
           .expect(400);
 
@@ -568,7 +568,7 @@ describe('Companies E2E', () => {
       it('should suspend an active company', async () => {
         const response = await request(app.getHttpServer())
           .patch(`/admin/companies/${activeCompany.id}/status`)
-          .set('Authorization', `Bearer ${nnAdminToken}`)
+          .set('Authorization', `Bearer ${acmeAdminToken}`)
           .send({
             status: CompanyStatus.SUSPENDED,
             reason: 'Terms of service violation',
@@ -587,7 +587,7 @@ describe('Companies E2E', () => {
       it('should reactivate a suspended company', async () => {
         const response = await request(app.getHttpServer())
           .patch(`/admin/companies/${suspendedCompany.id}/status`)
-          .set('Authorization', `Bearer ${nnAdminToken}`)
+          .set('Authorization', `Bearer ${acmeAdminToken}`)
           .send({
             status: CompanyStatus.ACTIVE,
             reason: 'Issues resolved',
@@ -619,7 +619,7 @@ describe('Companies E2E', () => {
 
         const response = await request(app.getHttpServer())
           .post('/admin/companies/vendor')
-          .set('Authorization', `Bearer ${nnAdminToken}`)
+          .set('Authorization', `Bearer ${acmeAdminToken}`)
           .send(vendorData)
           .expect(201);
 
@@ -726,12 +726,12 @@ describe('Companies E2E', () => {
       const promises = [
         request(app.getHttpServer())
           .patch(`/admin/companies/${pendingCompany.id}/approve`)
-          .set('Authorization', `Bearer ${nnAdminToken}`)
+          .set('Authorization', `Bearer ${acmeAdminToken}`)
           .send({ reason: 'First approval attempt' }),
 
         request(app.getHttpServer())
           .patch(`/admin/companies/${pendingCompany.id}/approve`)
-          .set('Authorization', `Bearer ${nnAdminToken}`)
+          .set('Authorization', `Bearer ${acmeAdminToken}`)
           .send({ reason: 'Second approval attempt' }),
       ];
 
@@ -795,7 +795,7 @@ describe('Companies E2E', () => {
       // This test would be more meaningful with a larger dataset
       const response = await request(app.getHttpServer())
         .get('/admin/companies?page=1&limit=100')
-        .set('Authorization', `Bearer ${nnAdminToken}`)
+        .set('Authorization', `Bearer ${acmeAdminToken}`)
         .expect(200);
 
       expect(response.body.companies.length).toBeLessThanOrEqual(100);
@@ -806,7 +806,7 @@ describe('Companies E2E', () => {
 
       await request(app.getHttpServer())
         .patch(`/admin/companies/${nonExistentId}/approve`)
-        .set('Authorization', `Bearer ${nnAdminToken}`)
+        .set('Authorization', `Bearer ${acmeAdminToken}`)
         .expect(404);
     });
   });

@@ -143,10 +143,10 @@ describe('CompanyController', () => {
       const roleTypes = [
         { code: 'vendor_employee', name: 'Vendor Employee' },
         { code: 'vendor_admin', name: 'Vendor Admin' },
-        { code: 'national_niner_employee', name: 'National Niner Employee' },
-        { code: 'national_niner_admin', name: 'National Niner Admin' },
+        { code: 'acme_employee', name: 'Acme Employee' },
+        { code: 'acme_admin', name: 'Acme Admin' },
         { code: 'vendor_manager', name: 'Vendor Manager' },
-        { code: 'national_niner_manager', name: 'National Niner Manager' },
+        { code: 'acme_manager', name: 'Acme Manager' },
         { code: 'super_admin', name: 'Super Admin' },
       ];
 

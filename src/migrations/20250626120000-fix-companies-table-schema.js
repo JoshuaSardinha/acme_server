@@ -152,25 +152,88 @@ module.exports = {
   },
 
   async down(queryInterface, Sequelize) {
-    try {
-      // Remove indexes
-      await queryInterface.removeIndex('Companies', 'idx_companies_type_status');
-      await queryInterface.removeIndex('Companies', 'idx_companies_primary_contact_user_id');
-      await queryInterface.removeIndex('Companies', 'idx_companies_billing_plan_id');
-      await queryInterface.removeIndex('Companies', 'unique_company_name');
-      
-      // Remove columns (billing_plan_id has no FK constraint to remove)
-      await queryInterface.removeColumn('Companies', 'submitted_documents_ref');
-      await queryInterface.removeColumn('Companies', 'primary_contact_user_id');
-      await queryInterface.removeColumn('Companies', 'billing_plan_id');
-      await queryInterface.removeColumn('Companies', 'status');
-      await queryInterface.removeColumn('Companies', 'type');
-      
-      // Note: subdomain column is preserved as it may have been added by another migration
-      
-    } catch (error) {
-      console.error('Error in Companies table migration rollback:', error);
-      throw error;
-    }
+    await queryInterface.sequelize.transaction(async (transaction) => {
+      try {
+        // Get existing indexes before attempting to remove them
+        const indexes = await queryInterface.showIndex('Companies');
+        const existingIndexNames = indexes.map(index => index.name);
+        
+        // Remove indexes if they exist (wrap in try-catch for FK constraint issues)
+        if (existingIndexNames.includes('idx_companies_type_status')) {
+          try {
+            console.log("Removing index 'idx_companies_type_status'...");
+            await queryInterface.removeIndex('Companies', 'idx_companies_type_status', { transaction });
+          } catch (error) {
+            console.warn('Could not remove index idx_companies_type_status:', error.message);
+          }
+        }
+        
+        if (existingIndexNames.includes('idx_companies_primary_contact_user_id')) {
+          try {
+            console.log("Removing index 'idx_companies_primary_contact_user_id'...");
+            await queryInterface.removeIndex('Companies', 'idx_companies_primary_contact_user_id', { transaction });
+          } catch (error) {
+            console.warn('Could not remove index idx_companies_primary_contact_user_id:', error.message);
+          }
+        }
+        
+        if (existingIndexNames.includes('idx_companies_billing_plan_id')) {
+          try {
+            console.log("Removing index 'idx_companies_billing_plan_id'...");
+            await queryInterface.removeIndex('Companies', 'idx_companies_billing_plan_id', { transaction });
+          } catch (error) {
+            console.warn('Could not remove index idx_companies_billing_plan_id:', error.message);
+          }
+        }
+        
+        if (existingIndexNames.includes('unique_company_name')) {
+          try {
+            console.log("Removing index 'unique_company_name'...");
+            await queryInterface.removeIndex('Companies', 'unique_company_name', { transaction });
+          } catch (error) {
+            console.warn('Could not remove index unique_company_name:', error.message);
+          }
+        }
+        
+        // Note: Check constraints on type and status columns are created by migration 
+        // 20250627000003-add-company-data-integrity-constraints and will be removed 
+        // by that migration's down method when it runs before this one
+        
+        // Get current table structure before removing columns
+        const tableDescription = await queryInterface.describeTable('Companies');
+        
+        // Remove columns if they exist (billing_plan_id has no FK constraint to remove)
+        if (tableDescription.submitted_documents_ref) {
+          console.log("Removing 'submitted_documents_ref' column...");
+          await queryInterface.removeColumn('Companies', 'submitted_documents_ref', { transaction });
+        }
+        
+        if (tableDescription.primary_contact_user_id) {
+          console.log("Removing 'primary_contact_user_id' column...");
+          await queryInterface.removeColumn('Companies', 'primary_contact_user_id', { transaction });
+        }
+        
+        if (tableDescription.billing_plan_id) {
+          console.log("Removing 'billing_plan_id' column...");
+          await queryInterface.removeColumn('Companies', 'billing_plan_id', { transaction });
+        }
+        
+        if (tableDescription.status) {
+          console.log("Removing 'status' column...");
+          await queryInterface.removeColumn('Companies', 'status', { transaction });
+        }
+        
+        if (tableDescription.type) {
+          console.log("Removing 'type' column...");
+          await queryInterface.removeColumn('Companies', 'type', { transaction });
+        }
+        
+        // Note: subdomain column is preserved as it may have been added by another migration
+        
+      } catch (error) {
+        console.error('Error in Companies table migration rollback:', error);
+        throw error;
+      }
+    });
   }
 };

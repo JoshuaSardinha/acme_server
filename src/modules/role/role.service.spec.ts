@@ -127,8 +127,8 @@ describe('RoleService', () => {
       const validRoleIds = [
         'vendor-admin-role-id',
         'team-member-role-id',
-        'national-niner-admin-role-id',
-        'national-niner-employee-role-id',
+        'acme-admin-role-id',
+        'acme-employee-role-id',
         'client-role-id',
       ];
 

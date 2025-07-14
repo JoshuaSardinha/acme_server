@@ -89,8 +89,8 @@ export class CompanyValidationService {
     const hasManagementRole = [
       'Vendor Admin',
       'Vendor Manager',
-      'National Niner Admin',
-      'National Niner Manager',
+      'Acme Admin',
+      'Acme Manager',
     ].includes(user.role?.name || '');
 
     if (!isOwner && !(isCompanyMember && hasManagementRole)) {
@@ -138,9 +138,9 @@ export class CompanyValidationService {
       throw new NotFoundException(`Requesting user with ID ${requestingUserId} not found`);
     }
 
-    // Allow National Niner employees to access any company
+    // Allow Acme employees to access any company
     if (
-      ['National Niner Admin', 'National Niner Manager', 'National Niner Employee'].includes(
+      ['Acme Admin', 'Acme Manager', 'Acme Employee'].includes(
         requestingUser.role?.name || ''
       )
     ) {
