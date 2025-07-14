@@ -58,7 +58,7 @@ acme_server/
 - Node.js 18+
 - MySQL 8.0+
 - Auth0 account (for authentication)
-- OpenAI API key (for chat functionality)
+- Google Gemini API key (for AI chat functionality)
 
 ## 🚀 Quick Start
 
@@ -151,10 +151,30 @@ Once the server is running, visit http://localhost:3000/api for interactive Swag
 
 ### Key Endpoints
 
-- `GET /companies` - List companies (multi-tenant filtered)
+#### Public Endpoints
+- `POST /companies/register-vendor` - Register a new vendor company
+- `GET /health` - Health check endpoint
+- `GET /config` - Get client configuration
+
+#### Authentication
+- `POST /auth/signup` - Create a new user account
+- `GET /auth/user` - Get authenticated user data
+- `GET /users/me` - Get authenticated user profile
+
+#### Company Management
+- `GET /company` - Get current user's company info
+- `GET /admin/companies` - List companies with filtering (admin only)
+- `POST /companies/:companyId/users` - Add user to company
+- `GET /companies/:companyId/users` - Get company users
+
+#### Team Management
 - `POST /teams` - Create a new team
-- `POST /chat/conversation` - Start an EB-2 NIW consultation
-- `POST /chat/upload` - Upload documents for analysis
+- `GET /teams` - List teams with pagination
+- `POST /teams/:teamId/members` - Add members to team
+- `DELETE /teams/:teamId` - Delete a team
+
+#### AI Chat
+- `POST /chat/eb-2` - EB-2 NIW consultation with document analysis (handles both text questions and file uploads)
 
 ## 🤝 Contributing
 
