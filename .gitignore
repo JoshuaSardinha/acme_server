@@ -29,7 +29,10 @@ jspm_packages/
 
 # Environment variables
 .env
-.env.*
+.env.development
+.env.docker
+.env.local
+.env.test
 
 # Mac system files
 .DS_Store
